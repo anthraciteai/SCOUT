@@ -21,6 +21,9 @@ backend/data/
 .env
 *.local
 
+# Build/test artifacts
+build.log
+
 # OS / editor
 .DS_Store
 Thumbs.db
