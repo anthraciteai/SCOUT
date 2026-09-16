@@ -7,6 +7,7 @@ import type {
   Proposal,
   ResumeInfo,
   SearchResponse,
+  TeamResponse,
   Topic,
   TrackedTopic,
 } from "../types";
@@ -46,6 +47,12 @@ export const AnalysisApi = {
   get: (id: number) => api.get<AnalysisRun>(`/analysis/${id}`).then((r) => r.data),
   latestForTopic: (topicId: string) =>
     api.get<AnalysisRun>(`/analysis/topic/${topicId}`).then((r) => r.data),
+};
+
+// ---- Team (Collier) ----
+export const TeamApi = {
+  recommend: (body: { topic_id?: string; proposal_content?: string; resume_id?: number }) =>
+    api.post<TeamResponse>("/team/recommend", body).then((r) => r.data),
 };
 
 // ---- Tracker ----

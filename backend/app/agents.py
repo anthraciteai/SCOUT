@@ -53,13 +53,31 @@ AGENTS: dict[str, dict[str, str]] = {
             '"strategic_value": string, "win_probability": 0-100}.'
         ),
     },
+    "Collier": {
+        "role": "Teaming & Staffing",
+        "system": (
+            "You are Collier, a teaming and staffing strategist for DoD SBIR/STTR bids (a collier "
+            "assembles the crew to work the seam). Given the topic, the applicant's resume/capabilities, "
+            "and optionally a proposal draft, identify the capability gaps NOT already covered by the "
+            "applicant, then recommend concretely WHO to add to win: specific roles, seniority, "
+            "disciplines, and the kind of partner organizations (e.g. a university/research-institution "
+            "partner for STTR, manufacturing/production partners, domain SMEs, key personnel, consultants). "
+            "Be specific and prioritized. Do NOT recommend adding people for capabilities the applicant "
+            "clearly already has - acknowledge those under covered_by_you.\n"
+            "Return ONLY JSON with keys: "
+            '{"covered_by_you": [string], "gaps": [string], '
+            '"roles_to_add": [{"role": string, "seniority": string, "why": string, "skills": [string]}], '
+            '"partner_types": [{"type": string, "why": string}], '
+            '"priority_hires": [string], "notes": string}.'
+        ),
+    },
     "Davy": {
         "role": "Capture Strategist",
         "system": (
             "You are Davy, a capture strategist. Given the topic, the applicant's resume, and the notes "
-            "from Canari (fit), Vien (technical), and Anthracite (business), synthesize an actionable "
-            "capture plan: the win themes and discriminators to emphasize, key questions to ask the TPOC, "
-            "and immediate next actions if pursuing.\n"
+            "from Canari (fit), Vien (technical), Anthracite (business), and Collier (teaming), synthesize "
+            "an actionable capture plan: the win themes and discriminators to emphasize, key questions to "
+            "ask the TPOC, and immediate next actions if pursuing.\n"
             "Return ONLY JSON with keys: "
             '{"win_themes": [string], "discriminators": [string], '
             '"questions_for_tpoc": [string], "next_actions": [string], '
@@ -168,11 +186,12 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     model = await ollama_client.resolve_model()
     topic_text = summarize_topic(topic)
 
-    # Canari, Vien, Anthracite can run concurrently.
-    canari, vien, anthracite = await asyncio.gather(
+    # Canari, Vien, Anthracite, Collier can run concurrently.
+    canari, vien, anthracite, collier = await asyncio.gather(
         run_single_agent("Canari", topic_text, resume_text),
         run_single_agent("Vien", topic_text, resume_text),
         run_single_agent("Anthracite", topic_text, resume_text),
+        run_single_agent("Collier", topic_text, resume_text),
     )
 
     # Davy synthesizes with the others' notes.
@@ -181,10 +200,17 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
         f"Canari (fit): {json.dumps(canari)[:2000]}\n"
         f"Vien (technical): {json.dumps(vien)[:2000]}\n"
         f"Anthracite (business): {json.dumps(anthracite)[:2000]}\n"
+        f"Collier (teaming): {json.dumps(collier)[:2000]}\n"
     )
     davy = await run_single_agent("Davy", topic_text, resume_text, extra=peer_notes)
 
-    agents = {"Canari": canari, "Vien": vien, "Anthracite": anthracite, "Davy": davy}
+    agents = {
+        "Canari": canari,
+        "Vien": vien,
+        "Anthracite": anthracite,
+        "Collier": collier,
+        "Davy": davy,
+    }
 
     council_prompt = (
         _agent_prompt(topic_text, resume_text)
@@ -197,6 +223,22 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     council = _safe_json(council_out)
 
     return {"agents": agents, "council": council, "model": model}
+
+
+async def recommend_team(
+    topic: Optional[dict[str, Any]],
+    resume_text: str,
+    proposal_text: str = "",
+) -> dict[str, Any]:
+    """Run just Collier to recommend who to add - for a topic and/or a proposal draft."""
+    topic_text = summarize_topic(topic) if topic else "(No specific topic provided.)"
+    extra = ""
+    if proposal_text.strip():
+        extra = (
+            "\n\nCURRENT PROPOSAL DRAFT (find gaps relative to what this draft promises):\n"
+            + proposal_text[:6000]
+        )
+    return await run_single_agent("Collier", topic_text, resume_text, extra=extra)
 
 
 def extract_score_and_rec(council: dict[str, Any]) -> tuple[Optional[float], Optional[str]]:

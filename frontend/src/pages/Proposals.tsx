@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ProposalsApi,
+  TeamApi,
   streamProposalFeedback,
   streamSavedFeedback,
 } from "../api";
-import type { Proposal } from "../types";
+import type { Proposal, TeamRecommendation } from "../types";
+import TeamCard from "../components/TeamCard";
 
 export default function Proposals() {
   const [list, setList] = useState<Proposal[]>([]);
@@ -16,6 +18,8 @@ export default function Proposals() {
   const [feedback, setFeedback] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [focus, setFocus] = useState("");
+  const [teamRec, setTeamRec] = useState<TeamRecommendation | null>(null);
+  const [teamLoading, setTeamLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   async function load() {
@@ -98,6 +102,22 @@ export default function Proposals() {
   function stop() {
     abortRef.current?.abort();
     setStreaming(false);
+  }
+
+  async function whoToAdd() {
+    setTeamLoading(true);
+    setTeamRec(null);
+    try {
+      const res = await TeamApi.recommend({
+        topic_id: topicId || undefined,
+        proposal_content: content || undefined,
+      });
+      setTeamRec(res.recommendation);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e.message || "Failed to get recommendations");
+    } finally {
+      setTeamLoading(false);
+    }
   }
 
   return (
@@ -187,6 +207,9 @@ export default function Proposals() {
               <button className="ghost" onClick={fullReview} disabled={streaming}>
                 Full review
               </button>
+              <button className="ghost" onClick={whoToAdd} disabled={teamLoading}>
+                {teamLoading ? "Thinking…" : "Who to add"}
+              </button>
               {streaming && (
                 <button className="danger" onClick={stop}>
                   Stop
@@ -194,6 +217,16 @@ export default function Proposals() {
               )}
             </div>
           </div>
+
+          {(teamRec || teamLoading) && (
+            <div className="card" style={{ borderColor: "#c98b3a" }}>
+              <h3 style={{ marginTop: 0 }}>
+                Team recommendations{" "}
+                {teamLoading && <span className="spinner">· Collier is thinking…</span>}
+              </h3>
+              {teamRec && <TeamCard rec={teamRec} />}
+            </div>
+          )}
 
           {(feedback || streaming) && (
             <div className="card">

@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnalysisApi, ResumeApi } from "../api";
-import type { AnalysisRun, AgentResult } from "../types";
+import type { AnalysisRun, AgentResult, TeamRecommendation } from "../types";
 import { useSelection } from "../selection";
+import TeamCard from "../components/TeamCard";
 
 const AGENT_COLORS: Record<string, string> = {
   Canari: "#f0c419",
   Vien: "#58a6ff",
   Anthracite: "#9aa4b2",
+  Collier: "#c98b3a",
   Davy: "#3fb950",
 };
 
@@ -58,7 +60,11 @@ function AgentCard({ name, data }: { name: string; data: AgentResult }) {
 
 export function CouncilCard({ run }: { run: AnalysisRun }) {
   const council = run.result?.council || {};
-  const agents = run.result?.agents || {};
+  const allAgents = run.result?.agents || {};
+  const collier = allAgents["Collier"] as TeamRecommendation | undefined;
+  const agents = Object.fromEntries(
+    Object.entries(allAgents).filter(([k]) => k !== "Collier")
+  );
   const score = council.fit_score ?? run.fit_score;
   const scoreColor =
     score == null ? "var(--muted)" : score >= 70 ? "var(--green)" : score >= 45 ? "var(--yellow)" : "var(--red)";
@@ -102,6 +108,15 @@ export function CouncilCard({ run }: { run: AnalysisRun }) {
           <List items={council.top_risks} />
         </div>
       </div>
+
+      {collier && (
+        <div
+          className="card"
+          style={{ marginTop: 10, background: "var(--panel-2)", borderColor: "#c98b3a" }}
+        >
+          <TeamCard rec={collier} />
+        </div>
+      )}
 
       <details style={{ marginTop: 10 }}>
         <summary style={{ cursor: "pointer", color: "var(--accent)" }}>
@@ -151,8 +166,9 @@ export default function Analysis() {
       <h1>Analysis</h1>
       <p className="subtitle">
         Run the agent council — <strong>Canari</strong> (fit), <strong>Vien</strong> (technical),{" "}
-        <strong>Anthracite</strong> (business dev), and <strong>Davy</strong> (capture) — on selected
-        topics against your resume, for a GO / NO-GO recommendation.
+        <strong>Anthracite</strong> (business dev), <strong>Collier</strong> (who to add), and{" "}
+        <strong>Davy</strong> (capture) — on selected topics against your resume, for a GO / NO-GO
+        recommendation.
       </p>
 
       {hasResume === false && (

@@ -11,6 +11,7 @@ from .routers import (
     proposals,
     resume,
     system,
+    team,
     topics,
     tracker,
 )
@@ -36,6 +37,7 @@ app.add_middleware(
 app.include_router(system.router)
 app.include_router(topics.router)
 app.include_router(analysis.router)
+app.include_router(team.router)
 app.include_router(tracker.router)
 app.include_router(proposals.router)
 app.include_router(debriefs.router)

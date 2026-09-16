@@ -8,7 +8,8 @@ from sqlmodel import Session, select
 
 from .. import agents, dsip
 from ..db import get_session
-from ..models import AnalysisRun, Resume
+from ..models import AnalysisRun
+from ..resume_service import get_resume_text
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
@@ -18,26 +19,12 @@ class RunRequest(BaseModel):
     resume_id: Optional[int] = None
 
 
-def _active_resume_text(session: Session, resume_id: Optional[int]) -> tuple[Optional[int], str]:
-    if resume_id is not None:
-        r = session.get(Resume, resume_id)
-        if r:
-            return r.id, r.text
-    r = session.exec(select(Resume).where(Resume.is_active == True)).first()  # noqa: E712
-    if r:
-        return r.id, r.text
-    r = session.exec(select(Resume)).first()
-    if r:
-        return r.id, r.text
-    return None, ""
-
-
 @router.post("/run")
 async def run_analysis(req: RunRequest, session: Session = Depends(get_session)):
     if not req.topic_ids:
         raise HTTPException(status_code=400, detail="No topic_ids provided")
 
-    resume_id, resume_text = _active_resume_text(session, req.resume_id)
+    resume_id, resume_text = get_resume_text(session, req.resume_id)
     runs = []
 
     for topic_id in req.topic_ids:

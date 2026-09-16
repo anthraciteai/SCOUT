@@ -101,6 +101,35 @@ export interface ResumeInfo {
   updated_at: string;
 }
 
+export interface RoleToAdd {
+  role: string;
+  seniority?: string;
+  why?: string;
+  skills?: string[];
+}
+
+export interface PartnerType {
+  type: string;
+  why?: string;
+}
+
+export interface TeamRecommendation {
+  _role?: string;
+  covered_by_you?: string[];
+  gaps?: string[];
+  roles_to_add?: RoleToAdd[];
+  partner_types?: PartnerType[];
+  priority_hires?: string[];
+  notes?: string;
+  raw?: string;
+}
+
+export interface TeamResponse {
+  recommendation: TeamRecommendation;
+  model: string;
+  topic_id?: string;
+}
+
 export interface OllamaStatus {
   base_url: string;
   configured_model: string;
