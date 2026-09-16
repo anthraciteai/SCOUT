@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://ollama:11434"
     ollama_model: str = "gpt-oss:20b"
     ollama_fallback_model: str = "llama3.1:8b"
-    ollama_timeout: float = 600.0
+    ollama_timeout: float = 1200.0
 
     # Storage
     database_url: str = "sqlite:////data/sbir_scout.db"

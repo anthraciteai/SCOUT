@@ -4,7 +4,6 @@ Each agent is a persona with a focused role. They analyze a DSIP topic against
 the user's resume/capabilities and return structured JSON. Davy + the Council
 synthesize a final GO / NO-GO recommendation with a fit score.
 """
-import asyncio
 import json
 from typing import Any, Optional
 
@@ -186,13 +185,13 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     model = await ollama_client.resolve_model()
     topic_text = summarize_topic(topic)
 
-    # Canari, Vien, Anthracite, Collier can run concurrently.
-    canari, vien, anthracite, collier = await asyncio.gather(
-        run_single_agent("Canari", topic_text, resume_text),
-        run_single_agent("Vien", topic_text, resume_text),
-        run_single_agent("Anthracite", topic_text, resume_text),
-        run_single_agent("Collier", topic_text, resume_text),
-    )
+    # A single Ollama instance serves one request at a time, so running the
+    # agents concurrently just queues them (and can trip per-request timeouts on
+    # slow CPU inference). Run them sequentially - same wall-clock, no queueing.
+    canari = await run_single_agent("Canari", topic_text, resume_text)
+    vien = await run_single_agent("Vien", topic_text, resume_text)
+    anthracite = await run_single_agent("Anthracite", topic_text, resume_text)
+    collier = await run_single_agent("Collier", topic_text, resume_text)
 
     # Davy synthesizes with the others' notes.
     peer_notes = (
