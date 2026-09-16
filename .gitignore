@@ -22,7 +22,7 @@ backend/data/
 *.local
 
 # Build/test artifacts
-build.log
+*.log
 
 # OS / editor
 .DS_Store
