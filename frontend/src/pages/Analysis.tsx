@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnalysisApi, ResumeApi } from "../api";
-import type { AnalysisRun, AgentResult, TeamRecommendation } from "../types";
+import type { AnalysisRun, AgentResult, TeamRecommendation, HewerResult } from "../types";
 import { useSelection } from "../selection";
 import TeamCard from "../components/TeamCard";
+import HewerCard, { liftColor, liftLabel } from "../components/HewerCard";
 import { topicMeta } from "./Browse";
 
 const AGENT_COLORS: Record<string, string> = {
@@ -11,6 +12,7 @@ const AGENT_COLORS: Record<string, string> = {
   Vien: "#58a6ff",
   Anthracite: "#9aa4b2",
   Collier: "#c98b3a",
+  Hewer: "#e0704f",
   Davy: "#3fb950",
 };
 
@@ -63,12 +65,14 @@ export function CouncilCard({ run }: { run: AnalysisRun }) {
   const council = run.result?.council || {};
   const allAgents = run.result?.agents || {};
   const collier = allAgents["Collier"] as TeamRecommendation | undefined;
+  const hewer = allAgents["Hewer"] as HewerResult | undefined;
   const agents = Object.fromEntries(
-    Object.entries(allAgents).filter(([k]) => k !== "Collier")
+    Object.entries(allAgents).filter(([k]) => k !== "Collier" && k !== "Hewer")
   );
   const score = council.fit_score ?? run.fit_score;
   const scoreColor =
     score == null ? "var(--muted)" : score >= 70 ? "var(--green)" : score >= 45 ? "var(--yellow)" : "var(--red)";
+  const lift = hewer?.heavy_lift ?? run.heavy_lift;
 
   return (
     <div className="card">
@@ -81,14 +85,27 @@ export function CouncilCard({ run }: { run: AnalysisRun }) {
             model: {run.model} · {new Date(run.created_at).toLocaleString()}
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div className="score" style={{ color: scoreColor }}>
-            {score != null ? Math.round(Number(score)) : "—"}
-            <span style={{ fontSize: 14, color: "var(--muted)" }}> /100</span>
+        <div className="row" style={{ gap: 20, alignItems: "flex-start" }}>
+          <div style={{ textAlign: "right" }}>
+            <div className="score" style={{ color: scoreColor }}>
+              {score != null ? Math.round(Number(score)) : "—"}
+              <span style={{ fontSize: 14, color: "var(--muted)" }}> /100</span>
+            </div>
+            <span className={`pill ${recClass(council.recommendation)}`}>
+              {council.recommendation || "N/A"}
+            </span>
+            <div className="meta" style={{ fontSize: 11 }}>fit</div>
           </div>
-          <span className={`pill ${recClass(council.recommendation)}`}>
-            {council.recommendation || "N/A"}
-          </span>
+          <div style={{ textAlign: "right" }}>
+            <div className="score" style={{ color: liftColor(lift) }}>
+              {lift != null ? Number(lift) : "—"}
+              <span style={{ fontSize: 14, color: "var(--muted)" }}> /10</span>
+            </div>
+            <span className="pill" style={{ borderColor: liftColor(lift), color: liftColor(lift) }}>
+              {liftLabel(lift)}
+            </span>
+            <div className="meta" style={{ fontSize: 11 }}>heavy lift</div>
+          </div>
         </div>
       </div>
 
@@ -109,6 +126,15 @@ export function CouncilCard({ run }: { run: AnalysisRun }) {
           <List items={council.top_risks} />
         </div>
       </div>
+
+      {hewer && (
+        <div
+          className="card"
+          style={{ marginTop: 10, background: "var(--panel-2)", borderColor: liftColor(lift) }}
+        >
+          <HewerCard rec={hewer} />
+        </div>
+      )}
 
       {collier && (
         <div
@@ -169,9 +195,9 @@ export default function Analysis() {
       <h1>Analysis</h1>
       <p className="subtitle">
         Run the agent council — <strong>Canari</strong> (fit), <strong>Vien</strong> (technical),{" "}
-        <strong>Anthracite</strong> (business dev), <strong>Collier</strong> (who to add), and{" "}
-        <strong>Davy</strong> (capture) — on selected topics against your resume, for a GO / NO-GO
-        recommendation.
+        <strong>Anthracite</strong> (business dev), <strong>Collier</strong> (who to add),{" "}
+        <strong>Hewer</strong> (heavy lift + adaptation), and <strong>Davy</strong> (capture) — on
+        selected topics against your resume, for a GO / NO-GO recommendation.
       </p>
 
       {hasResume === false && (
@@ -231,6 +257,7 @@ export default function Analysis() {
               <tr>
                 <th>Topic</th>
                 <th>Score</th>
+                <th>Lift</th>
                 <th>Rec</th>
                 <th>When</th>
               </tr>
@@ -244,6 +271,9 @@ export default function Analysis() {
                     </Link>
                   </td>
                   <td>{h.fit_score != null ? Math.round(h.fit_score) : "—"}</td>
+                  <td style={{ color: liftColor(h.heavy_lift) }}>
+                    {h.heavy_lift != null ? h.heavy_lift : "—"}
+                  </td>
                   <td>
                     <span className={`pill ${recClass(h.recommendation)}`}>
                       {h.recommendation || "—"}

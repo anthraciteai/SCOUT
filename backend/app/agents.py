@@ -70,13 +70,30 @@ AGENTS: dict[str, dict[str, str]] = {
             '"priority_hires": [string], "notes": string}.'
         ),
     },
+    "Hewer": {
+        "role": "Lift & Adaptation",
+        "system": (
+            "You are Hewer - the miner who cuts the coal from the seam, i.e. the one who does the heavy "
+            "lifting. Assess how big a LIFT it is to adapt the applicant's EXISTING product/capabilities "
+            "(from their resume) to win and deliver THIS DoD SBIR/STTR topic. Score heavy_lift on a 0-10 "
+            "scale: 0 = their product does this as-is; 1-4 = minor adaptation/configuration/integration; "
+            "5-7 = significant new development on top of what they have; 8-10 = essentially a new product. "
+            "Be realistic and specific. ALWAYS include an adaptation_plan of concrete steps to make their "
+            "existing product work for this proposal - and when heavy_lift is 4 or below, make that plan "
+            "detailed and actionable (this is a strong, low-risk pursuit).\n"
+            "Return ONLY JSON with keys: "
+            '{"heavy_lift": 0-10, "lift_rationale": string, "reuse_as_is": [string], '
+            '"adaptation_plan": [string], '
+            '"effort_breakdown": [{"area": string, "effort": "low|medium|high"}]}.'
+        ),
+    },
     "Davy": {
         "role": "Capture Strategist",
         "system": (
             "You are Davy, a capture strategist. Given the topic, the applicant's resume, and the notes "
-            "from Canari (fit), Vien (technical), Anthracite (business), and Collier (teaming), synthesize "
-            "an actionable capture plan: the win themes and discriminators to emphasize, key questions to "
-            "ask the TPOC, and immediate next actions if pursuing.\n"
+            "from Canari (fit), Vien (technical), Anthracite (business), Collier (teaming), and Hewer "
+            "(lift/adaptation), synthesize an actionable capture plan: the win themes and discriminators "
+            "to emphasize, key questions to ask the TPOC, and immediate next actions if pursuing.\n"
             "Return ONLY JSON with keys: "
             '{"win_themes": [string], "discriminators": [string], '
             '"questions_for_tpoc": [string], "next_actions": [string], '
@@ -193,6 +210,12 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     anthracite = await run_single_agent("Anthracite", topic_text, resume_text)
     collier = await run_single_agent("Collier", topic_text, resume_text)
 
+    # Hewer benefits from the technical read when scoring the lift.
+    hewer_notes = (
+        "\n\nTECHNICAL NOTES (from Vien):\n" + json.dumps(vien)[:2000]
+    )
+    hewer = await run_single_agent("Hewer", topic_text, resume_text, extra=hewer_notes)
+
     # Davy synthesizes with the others' notes.
     peer_notes = (
         "\n\nPEER ASSESSMENTS:\n"
@@ -200,6 +223,7 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
         f"Vien (technical): {json.dumps(vien)[:2000]}\n"
         f"Anthracite (business): {json.dumps(anthracite)[:2000]}\n"
         f"Collier (teaming): {json.dumps(collier)[:2000]}\n"
+        f"Hewer (lift): {json.dumps(hewer)[:2000]}\n"
     )
     davy = await run_single_agent("Davy", topic_text, resume_text, extra=peer_notes)
 
@@ -208,6 +232,7 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
         "Vien": vien,
         "Anthracite": anthracite,
         "Collier": collier,
+        "Hewer": hewer,
         "Davy": davy,
     }
 
@@ -248,3 +273,12 @@ def extract_score_and_rec(council: dict[str, Any]) -> tuple[Optional[float], Opt
         score = None
     rec = council.get("recommendation")
     return score, rec
+
+
+def extract_heavy_lift(agents: dict[str, Any]) -> Optional[float]:
+    hewer = agents.get("Hewer") or {}
+    val = hewer.get("heavy_lift")
+    try:
+        return float(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None

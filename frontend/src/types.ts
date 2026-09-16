@@ -45,6 +45,21 @@ export interface CouncilResult {
   [key: string]: unknown;
 }
 
+export interface EffortItem {
+  area: string;
+  effort?: string;
+}
+
+export interface HewerResult {
+  _role?: string;
+  heavy_lift?: number;
+  lift_rationale?: string;
+  reuse_as_is?: string[];
+  adaptation_plan?: string[];
+  effort_breakdown?: EffortItem[];
+  raw?: string;
+}
+
 export interface AnalysisRun {
   id: number;
   topic_id: string;
@@ -52,6 +67,7 @@ export interface AnalysisRun {
   title?: string;
   model: string;
   fit_score?: number;
+  heavy_lift?: number;
   recommendation?: string;
   created_at: string;
   result?: {
@@ -59,6 +75,12 @@ export interface AnalysisRun {
     council: CouncilResult;
     model: string;
   };
+}
+
+export interface AgentRunResponse {
+  agent: string;
+  result: AgentResult;
+  model: string;
 }
 
 export interface TrackedTopic {

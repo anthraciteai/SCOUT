@@ -64,6 +64,7 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
 
         result = await agents.analyze_topic(topic, resume_text)
         score, rec = agents.extract_score_and_rec(result.get("council", {}))
+        heavy_lift = agents.extract_heavy_lift(result.get("agents", {}))
 
         run = AnalysisRun(
             topic_id=topic_id,
@@ -73,6 +74,7 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
             resume_id=resume_id,
             result_json=json.dumps(result),
             fit_score=score,
+            heavy_lift=heavy_lift,
             recommendation=rec,
         )
         session.add(run)
@@ -91,10 +93,49 @@ def _serialize(run: AnalysisRun) -> dict:
         "title": run.title,
         "model": run.model,
         "fit_score": run.fit_score,
+        "heavy_lift": run.heavy_lift,
         "recommendation": run.recommendation,
         "created_at": run.created_at.isoformat(),
         "result": json.loads(run.result_json or "{}"),
     }
+
+
+class AgentRequest(BaseModel):
+    topic_id: str
+    agent: str
+    resume_id: Optional[int] = None
+    topics_meta: Optional[dict[str, dict]] = None
+    # JSON of already-run agents, used as peer context (e.g. for Davy/Hewer).
+    context: Optional[str] = None
+
+
+@router.post("/agent")
+async def run_agent(req: AgentRequest, session: Session = Depends(get_session)):
+    if req.agent not in agents.AGENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown agent '{req.agent}'. Options: {list(agents.AGENTS)}",
+        )
+    _, resume_text = get_resume_text(session, req.resume_id)
+
+    try:
+        topic = await dsip.get_topic(req.topic_id)
+    except Exception:
+        topic = {"topicId": req.topic_id}
+    if isinstance(topic, dict) and "topic" in topic and isinstance(topic["topic"], dict):
+        topic = {**topic, **topic["topic"]}
+    topic = _merge_meta(topic, (req.topics_meta or {}).get(req.topic_id))
+
+    topic_text = agents.summarize_topic(topic)
+    extra = f"\n\nPEER ASSESSMENTS:\n{req.context}" if req.context else ""
+    result = await agents.run_single_agent(req.agent, topic_text, resume_text, extra=extra)
+    model = await agents.ollama_client.resolve_model()
+    return {"agent": req.agent, "result": result, "model": model}
+
+
+@router.get("/agents")
+def list_agent_names():
+    return [{"name": n, "role": s["role"]} for n, s in agents.AGENTS.items()]
 
 
 @router.get("")
@@ -109,6 +150,7 @@ def list_runs(session: Session = Depends(get_session)):
             "title": r.title,
             "model": r.model,
             "fit_score": r.fit_score,
+            "heavy_lift": r.heavy_lift,
             "recommendation": r.recommendation,
             "created_at": r.created_at.isoformat(),
         }

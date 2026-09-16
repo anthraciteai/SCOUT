@@ -44,6 +44,7 @@ class AnalysisRun(SQLModel, table=True):
     # JSON string: {"agents": {name: {...}}, "council": {...}}
     result_json: str = "{}"
     fit_score: Optional[float] = None          # 0-100 council score
+    heavy_lift: Optional[float] = None         # 0-10 effort to adapt product (Hewer)
     recommendation: Optional[str] = None       # GO / NO-GO / LEAN GO ...
     created_at: datetime = Field(default_factory=_now)
 

@@ -1,4 +1,5 @@
 import os
+from sqlalchemy import inspect, text
 from sqlmodel import SQLModel, Session, create_engine
 
 from .config import settings
@@ -13,11 +14,33 @@ engine = create_engine(
 )
 
 
+def _auto_migrate() -> None:
+    """Add any columns present on the models but missing from existing tables.
+
+    Lightweight forward-only migration for SQLite so new nullable columns (e.g.
+    AnalysisRun.heavy_lift) don't break inserts against a pre-existing DB.
+    """
+    insp = inspect(engine)
+    for table_name, table in SQLModel.metadata.tables.items():
+        if not insp.has_table(table_name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table_name)}
+        for col in table.columns:
+            if col.name in existing:
+                continue
+            coltype = col.type.compile(engine.dialect)
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col.name}" {coltype}')
+                )
+
+
 def init_db() -> None:
     # Import models so they are registered on SQLModel.metadata
     from . import models  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
+    _auto_migrate()
 
 
 def get_session():

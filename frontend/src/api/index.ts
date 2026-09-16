@@ -1,6 +1,7 @@
 import { api, API_BASE } from "./client";
 import type {
   AgentMeta,
+  AgentRunResponse,
   AnalysisRun,
   Debrief,
   OllamaStatus,
@@ -57,6 +58,16 @@ export const AnalysisApi = {
   get: (id: number) => api.get<AnalysisRun>(`/analysis/${id}`).then((r) => r.data),
   latestForTopic: (topicId: string) =>
     api.get<AnalysisRun>(`/analysis/topic/${topicId}`).then((r) => r.data),
+  agentNames: () => api.get<AgentMeta[]>("/analysis/agents").then((r) => r.data),
+  runAgent: (
+    topic_id: string,
+    agent: string,
+    topics_meta?: Record<string, TopicMeta>,
+    context?: string
+  ) =>
+    api
+      .post<AgentRunResponse>("/analysis/agent", { topic_id, agent, topics_meta, context })
+      .then((r) => r.data),
 };
 
 // ---- Team (Collier) ----

@@ -4,6 +4,7 @@ import { AnalysisApi, ProposalsApi, TopicsApi, TrackerApi } from "../api";
 import type { AnalysisRun, Topic, TrackedTopic } from "../types";
 import { topicCode, topicTitle, statusClass, topicMeta, TopicDates } from "./Browse";
 import { CouncilCard } from "./Analysis";
+import AgentStepper from "../components/AgentStepper";
 import { useToast } from "../toast";
 import { sanitizeHtml, parseAnswer } from "../util/html";
 
@@ -218,6 +219,10 @@ export default function TopicDetail() {
           <CouncilCard run={run} />
         </div>
       )}
+
+      <div style={{ marginBottom: 16 }}>
+        <AgentStepper topic={topic} />
+      </div>
 
       <div className="card">
         <div className="row spread">
