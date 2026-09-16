@@ -7,14 +7,10 @@ services:
     volumes:
       - ollama_models:/root/.ollama
     restart: unless-stopped
-    # Uncomment to enable NVIDIA GPU acceleration (needs nvidia-container-toolkit):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # NVIDIA GPU passthrough (needs Docker Desktop + NVIDIA driver on Windows/WSL2,
+    # or nvidia-container-toolkit on Linux). Remove this line on machines w/o an
+    # NVIDIA GPU (Ollama will then run on CPU).
+    gpus: all
 
   backend:
     build:

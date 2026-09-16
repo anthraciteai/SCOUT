@@ -3,12 +3,16 @@
 The upstream returns 403 without a browser-like User-Agent, so every request
 here injects one. A generic passthrough plus a few typed helpers are exposed.
 """
+import asyncio
 import json
 from typing import Any, Optional
 
 import httpx
 
 from .config import settings
+
+_RETRIES = 3
+_BACKOFF = 0.8  # seconds, grows linearly
 
 
 def _headers() -> dict[str, str]:
@@ -28,18 +32,39 @@ async def _client() -> httpx.AsyncClient:
     )
 
 
+async def _get_with_retry(path: str, params: Optional[dict[str, Any]] = None) -> httpx.Response:
+    """GET with retries on transient transport errors / upstream 5xx."""
+    last_exc: Optional[Exception] = None
+    for attempt in range(_RETRIES):
+        try:
+            async with await _client() as client:
+                resp = await client.get(path, params=params)
+            # Retry transient upstream errors (bad gateway / unavailable / timeout)
+            if resp.status_code in (502, 503, 504) and attempt < _RETRIES - 1:
+                await asyncio.sleep(_BACKOFF * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError:
+            raise  # non-retryable 4xx/5xx (already raised for status)
+        except httpx.TransportError as e:  # ConnectError, ReadTimeout, etc.
+            last_exc = e
+            if attempt < _RETRIES - 1:
+                await asyncio.sleep(_BACKOFF * (attempt + 1))
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise httpx.HTTPError("DSIP request failed")
+
+
 async def get_json(path: str, params: Optional[dict[str, Any]] = None) -> Any:
-    async with await _client() as client:
-        resp = await client.get(path, params=params)
-        resp.raise_for_status()
-        return resp.json()
+    resp = await _get_with_retry(path, params=params)
+    return resp.json()
 
 
 async def get_bytes(path: str, params: Optional[dict[str, Any]] = None) -> httpx.Response:
-    async with await _client() as client:
-        resp = await client.get(path, params=params)
-        resp.raise_for_status()
-        return resp
+    return await _get_with_retry(path, params=params)
 
 
 def build_search_param(

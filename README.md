@@ -38,8 +38,12 @@ Or click **Pull** in the app under **Settings**. Until it finishes, the app auto
 back to `OLLAMA_FALLBACK_MODEL` (default `llama3.1:8b`). Change the model in `.env`
 (`OLLAMA_MODEL`).
 
-> GPU: uncomment the `deploy.resources` block for the `ollama` service in `docker-compose.yml`
-> if you have the NVIDIA container toolkit — otherwise it runs on CPU.
+> GPU: the `ollama` service uses `gpus: all` by default (needs Docker Desktop + NVIDIA
+> driver on Windows/WSL2, or nvidia-container-toolkit on Linux). Verify with
+> `docker exec sbir-ollama nvidia-smi`. On a machine without an NVIDIA GPU, remove the
+> `gpus: all` line from `docker-compose.yml` and Ollama will run on CPU.
+> Note: `gpt-oss:20b` (~13 GB) is larger than a 12 GB card's VRAM, so Ollama splits
+> layers across GPU+CPU (e.g. ~26% CPU / 74% GPU). It's still far faster than CPU-only.
 
 ---
 
