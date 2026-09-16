@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   ProposalsApi,
   TeamApi,
@@ -8,6 +9,7 @@ import {
 import type { Proposal, TeamRecommendation } from "../types";
 import TeamCard from "../components/TeamCard";
 import TopicPicker from "../components/TopicPicker";
+import { useToast } from "../toast";
 
 export default function Proposals() {
   const [list, setList] = useState<Proposal[]>([]);
@@ -23,12 +25,25 @@ export default function Proposals() {
   const [teamRec, setTeamRec] = useState<TeamRecommendation | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const toast = useToast();
+  const location = useLocation();
 
   async function load() {
-    setList(await ProposalsApi.list());
+    const rows = await ProposalsApi.list();
+    setList(rows);
+    return rows;
   }
   useEffect(() => {
-    load();
+    (async () => {
+      const rows = await load();
+      // Auto-open a proposal if navigated here from "Create linked proposal".
+      const openId = (location.state as { openProposalId?: number } | null)?.openProposalId;
+      if (openId) {
+        const p = rows.find((r) => r.id === openId);
+        if (p) edit(p);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function edit(p: Proposal) {
@@ -66,6 +81,7 @@ export default function Proposals() {
       : await ProposalsApi.create(body);
     setCurrent(saved);
     await load();
+    toast("Proposal saved");
   }
 
   async function remove(p: Proposal) {
@@ -95,7 +111,7 @@ export default function Proposals() {
 
   async function fullReview() {
     if (!current) {
-      alert("Save the proposal first for a full review (uses topic + debrief context).");
+      toast("Save the proposal first for a full review (uses topic + debrief context).", "info");
       return;
     }
     setStreaming(true);
@@ -126,7 +142,7 @@ export default function Proposals() {
       });
       setTeamRec(res.recommendation);
     } catch (e: any) {
-      alert(e?.response?.data?.detail || e.message || "Failed to get recommendations");
+      toast(e?.response?.data?.detail || e.message || "Failed to get recommendations", "error");
     } finally {
       setTeamLoading(false);
     }

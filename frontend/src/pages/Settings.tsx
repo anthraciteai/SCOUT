@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ResumeApi, SystemApi } from "../api";
 import type { AgentMeta, OllamaStatus, ResumeInfo } from "../types";
+import { useToast } from "../toast";
 
 export default function Settings() {
   const [resumes, setResumes] = useState<ResumeInfo[]>([]);
@@ -12,6 +13,7 @@ export default function Settings() {
   const [pulling, setPulling] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   async function loadAll() {
     const [rs, act] = await Promise.all([ResumeApi.list(), ResumeApi.active()]);
@@ -31,6 +33,7 @@ export default function Settings() {
     try {
       await ResumeApi.fromText(name, text);
       await loadAll();
+      toast("Resume saved & set active");
     } finally {
       setBusy(false);
     }
@@ -45,6 +48,7 @@ export default function Settings() {
       setText(r.text || "");
       if (fileRef.current) fileRef.current.value = "";
       await loadAll();
+      toast(`Resume uploaded (${r.chars} chars)`);
     } finally {
       setBusy(false);
     }
@@ -65,8 +69,9 @@ export default function Settings() {
     try {
       await SystemApi.pull();
       await loadAll();
+      toast("Model pulled");
     } catch (e: any) {
-      alert(e?.response?.data?.detail || e.message);
+      toast(e?.response?.data?.detail || e.message || "Pull failed", "error");
     } finally {
       setPulling(false);
     }

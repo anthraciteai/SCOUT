@@ -4,6 +4,7 @@ import { TopicsApi, TrackerApi } from "../api";
 import type { TopicScope } from "../api";
 import type { Topic } from "../types";
 import { useSelection } from "../selection";
+import { useToast } from "../toast";
 
 const PAGE_SIZE = 10;
 
@@ -80,6 +81,7 @@ export default function Browse() {
 
   const { toggle, isSelected, ids } = useSelection();
   const navigate = useNavigate();
+  const toast = useToast();
 
   async function load(p = page) {
     setLoading(true);
@@ -127,7 +129,7 @@ export default function Browse() {
       topic_status: t.topicStatus,
       raw: t,
     });
-    alert(`Tracking ${topicCode(t)}`);
+    toast(`Added ${topicCode(t)} to tracker`);
   }
 
   const pages = Math.ceil(total / PAGE_SIZE);

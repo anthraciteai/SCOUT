@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { AnalysisApi, TopicsApi, TrackerApi } from "../api";
-import type { AnalysisRun, Topic } from "../types";
+import { AnalysisApi, ProposalsApi, TopicsApi, TrackerApi } from "../api";
+import type { AnalysisRun, Topic, TrackedTopic } from "../types";
 import { topicCode, topicTitle, statusClass, topicMeta, TopicDates } from "./Browse";
 import { CouncilCard } from "./Analysis";
+import { useToast } from "../toast";
+import { sanitizeHtml, parseAnswer } from "../util/html";
 
 function stripHtml(s?: string) {
   if (!s) return "";
@@ -21,6 +23,9 @@ export default function TopicDetail() {
   const [analyzing, setAnalyzing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"pdf" | "text">("pdf");
+  const [tracked, setTracked] = useState<TrackedTopic | null>(null);
+  const [stages, setStages] = useState<string[]>([]);
+  const toast = useToast();
 
   useEffect(() => {
     (async () => {
@@ -46,6 +51,13 @@ export default function TopicDetail() {
       } catch {
         setRun(null);
       }
+      try {
+        const [list, st] = await Promise.all([TrackerApi.list(), TrackerApi.stages()]);
+        setTracked(list.find((t) => t.topic_id === id) || null);
+        setStages(st);
+      } catch {
+        /* ignore */
+      }
       setLoading(false);
     })();
   }, [id]);
@@ -61,18 +73,41 @@ export default function TopicDetail() {
     }
   }
 
-  async function track() {
+  async function track(status: string, label: string) {
     if (!topic) return;
-    await TrackerApi.track({
+    const t = await TrackerApi.track({
       topic_id: id,
       topic_code: topicCode(topic),
       title: topicTitle(topic),
       component: topic.component,
       program: topic.program,
       topic_status: topic.topicStatus,
+      status,
       raw: topic,
     });
-    alert("Added to tracker");
+    // track() returns the existing row if already tracked; enforce requested status.
+    const updated = t.status === status ? t : await TrackerApi.update(t.id, { status });
+    setTracked(updated);
+    toast(label);
+  }
+
+  async function updateTracked(body: { status?: string; outcome?: string; notes?: string }) {
+    if (!tracked) return;
+    const updated = await TrackerApi.update(tracked.id, body);
+    setTracked(updated);
+    toast("Updated");
+  }
+
+  async function createLinkedProposal() {
+    if (!topic) return;
+    const p = await ProposalsApi.create({
+      title: `${topicCode(topic)} — Proposal`,
+      topic_id: id,
+      topic_code: topicCode(topic),
+      status: "submitted",
+    });
+    toast("Proposal draft created & linked");
+    navigate("/proposals", { state: { openProposalId: p.id } });
   }
 
   if (loading) return <div className="spinner">Loading topic…</div>;
@@ -105,15 +140,77 @@ export default function TopicDetail() {
         <button onClick={analyze} disabled={analyzing}>
           {analyzing ? "Running council…" : run ? "Re-run Analysis" : "Run Agent Analysis"}
         </button>
-        <button className="ghost" onClick={track}>
-          Track
-        </button>
         <a className="tag" href={TopicsApi.downloadUrl(id, "PDF")} target="_blank" rel="noreferrer">
           Download PDF
         </a>
         <a className="tag" href={TopicsApi.downloadUrl(id, "DOCX")} target="_blank" rel="noreferrer">
           Download DOCX
         </a>
+      </div>
+
+      {/* One-shot bid workflow */}
+      <div className="card" style={{ borderColor: tracked ? "var(--green)" : "var(--border)" }}>
+        {!tracked ? (
+          <div className="row spread">
+            <div>
+              <strong>Pursuing this topic?</strong>
+              <div className="meta">Record it in one click — no need to jump to the Tracker.</div>
+            </div>
+            <div className="row">
+              <button onClick={() => track("submitted", "Recorded your bid")}>I bid on this</button>
+              <button className="ghost" onClick={() => track("watching", "Watching topic")}>
+                Watch
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="row spread">
+              <strong>Your bid</strong>
+              <span className="meta">In your pipeline</span>
+            </div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <label className="kv">
+                Stage&nbsp;
+                <select
+                  value={tracked.status}
+                  onChange={(e) => updateTracked({ status: e.target.value })}
+                >
+                  {stages.map((s) => (
+                    <option key={s} value={s}>
+                      {s.replace(/_/g, " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="kv">
+                Outcome&nbsp;
+                <select
+                  value={tracked.outcome || ""}
+                  onChange={(e) => updateTracked({ outcome: e.target.value })}
+                >
+                  {["", "pending", "awarded", "not_selected", "withdrawn"].map((o) => (
+                    <option key={o} value={o}>
+                      {o ? o.replace(/_/g, " ") : "—"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="ghost" onClick={createLinkedProposal}>
+                Create linked proposal
+              </button>
+            </div>
+            <textarea
+              style={{ marginTop: 10 }}
+              rows={2}
+              defaultValue={tracked.notes}
+              placeholder="Bid notes…"
+              onBlur={(e) => {
+                if (e.target.value !== tracked.notes) updateTracked({ notes: e.target.value });
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {run?.result && (
@@ -188,18 +285,49 @@ export default function TopicDetail() {
       <div className="card">
         <h3>Q&amp;A ({questions.length})</h3>
         {questions.length === 0 && <div className="meta">No published questions.</div>}
-        {questions.map((q: any, i: number) => (
-          <div key={i} style={{ borderBottom: "1px solid var(--border)", padding: "8px 0" }}>
-            <div style={{ fontSize: 14 }}>
-              <strong>Q:</strong> {q.question || q.questionText || q.text}
-            </div>
-            {(q.answer || q.answerText) && (
-              <div style={{ fontSize: 14, color: "var(--muted)", marginTop: 4 }}>
-                <strong>A:</strong> {q.answer || q.answerText}
+        {questions.map((q: any, i: number) => {
+          const answers: string[] = (q.answers || [])
+            .map((a: any) => parseAnswer(a.answer))
+            .filter((s: string) => s && s.trim());
+          return (
+            <div key={q.questionId ?? i} style={{ borderBottom: "1px solid var(--border)", padding: "10px 0" }}>
+              <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                <span className="tag">Q{q.questionNo ?? i + 1}</span>
+                {q.questionStatusDisplay && (
+                  <span className="meta">{q.questionStatusDisplay}</span>
+                )}
               </div>
-            )}
-          </div>
-        ))}
+              <div
+                className="rich"
+                style={{ fontSize: 14 }}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeHtml(q.question || q.questionText || q.text || ""),
+                }}
+              />
+              {answers.length > 0 ? (
+                answers.map((ans, j) => (
+                  <div
+                    key={j}
+                    className="rich"
+                    style={{
+                      fontSize: 14,
+                      marginTop: 6,
+                      paddingLeft: 12,
+                      borderLeft: "3px solid var(--green)",
+                    }}
+                  >
+                    <div className="kv" style={{ color: "var(--green)" }}>Answer</div>
+                    <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(ans) }} />
+                  </div>
+                ))
+              ) : (
+                <div className="meta" style={{ marginTop: 4 }}>
+                  Not yet answered.
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
