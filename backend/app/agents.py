@@ -1,0 +1,209 @@
+"""The SBIR Scout agent council.
+
+Each agent is a persona with a focused role. They analyze a DSIP topic against
+the user's resume/capabilities and return structured JSON. Davy + the Council
+synthesize a final GO / NO-GO recommendation with a fit score.
+"""
+import asyncio
+import json
+from typing import Any, Optional
+
+from . import ollama_client
+
+
+# ---- Persona definitions -------------------------------------------------
+
+AGENTS: dict[str, dict[str, str]] = {
+    "Canari": {
+        "role": "Fit Scout & Early-Warning",
+        "system": (
+            "You are Canari, the canary-in-the-coal-mine fit scout for a small business "
+            "pursuing DoD SBIR/STTR topics. You give a fast, blunt go/no-go signal and surface "
+            "RED FLAGS early: eligibility issues, mismatched scope, unrealistic timelines, "
+            "incumbent lock-in, or requirements far outside the applicant's demonstrated skills. "
+            "You are skeptical and protective of the applicant's time.\n"
+            "Return ONLY JSON with keys: "
+            '{"signal": "green|yellow|red", "quick_take": string, '
+            '"red_flags": [string], "eligibility_notes": [string], "confidence": 0-100}.'
+        ),
+    },
+    "Vien": {
+        "role": "Technical Analyst",
+        "system": (
+            "You are Vien, a rigorous technical analyst. You assess technical feasibility of a "
+            "DoD SBIR/STTR topic and how well the applicant's demonstrated skills (from their resume) "
+            "map to the required technical work. Identify concrete capability matches, gaps, and the "
+            "technical approach that would be needed.\n"
+            "Return ONLY JSON with keys: "
+            '{"technical_summary": string, "capability_matches": [string], '
+            '"capability_gaps": [string], "suggested_approach": [string], '
+            '"technical_risk": "low|medium|high", "technical_fit_score": 0-100}.'
+        ),
+    },
+    "Anthracite": {
+        "role": "Business Developer",
+        "system": (
+            "You are Anthracite, a seasoned government business developer / capture BD. You assess the "
+            "business case: the sponsoring component's mission need, likely competition and incumbents, "
+            "transition/commercialization path (Phase I -> II -> III), teaming or partnering needs, and "
+            "estimated win probability for a small business with the applicant's profile.\n"
+            "Return ONLY JSON with keys: "
+            '{"customer_need": string, "competition_landscape": string, '
+            '"transition_path": string, "teaming_recommendations": [string], '
+            '"strategic_value": string, "win_probability": 0-100}.'
+        ),
+    },
+    "Davy": {
+        "role": "Capture Strategist",
+        "system": (
+            "You are Davy, a capture strategist. Given the topic, the applicant's resume, and the notes "
+            "from Canari (fit), Vien (technical), and Anthracite (business), synthesize an actionable "
+            "capture plan: the win themes and discriminators to emphasize, key questions to ask the TPOC, "
+            "and immediate next actions if pursuing.\n"
+            "Return ONLY JSON with keys: "
+            '{"win_themes": [string], "discriminators": [string], '
+            '"questions_for_tpoc": [string], "next_actions": [string], '
+            '"bid_lean": "GO|LEAN GO|LEAN NO-GO|NO-GO"}.'
+        ),
+    },
+}
+
+COUNCIL_SYSTEM = (
+    "You are the SBIR Scout Council chair. You are given a DoD SBIR/STTR topic, the applicant's "
+    "capabilities, and structured assessments from Canari (fit), Vien (technical), Anthracite "
+    "(business), and Davy (capture). Produce the final recommendation.\n"
+    "Return ONLY JSON with keys: "
+    '{"fit_score": 0-100, "recommendation": "GO|LEAN GO|LEAN NO-GO|NO-GO", '
+    '"rationale": string, "top_strengths": [string], "top_risks": [string], '
+    '"decision_summary": string}.'
+)
+
+
+# ---- Helpers -------------------------------------------------------------
+
+def _safe_json(text: str) -> dict[str, Any]:
+    text = (text or "").strip()
+    if not text:
+        return {}
+    # Strip code fences if present
+    if text.startswith("```"):
+        text = text.strip("`")
+        if "\n" in text:
+            text = text.split("\n", 1)[1]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # try to grab the outermost {...}
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+    return {"raw": text}
+
+
+def summarize_topic(topic: dict[str, Any]) -> str:
+    """Build a compact prompt-friendly description of a DSIP topic."""
+    def g(*keys, default="N/A"):
+        for k in keys:
+            v = topic.get(k)
+            if v not in (None, "", []):
+                return v
+        return default
+
+    objective = g("objective", "topicObjective", default="")
+    description = g("description", "topicDescription", default="")
+    # These can be very long HTML blobs; trim.
+    def trim(s, n=2500):
+        s = str(s)
+        return s[:n] + ("..." if len(s) > n else "")
+
+    parts = [
+        f"Topic Code: {g('topicCode', 'finalTopicCode')}",
+        f"Title: {g('topicTitle', 'title')}",
+        f"Component/Command: {g('component')} / {g('command')}",
+        f"Program: {g('program')}   Status: {g('topicStatus')}",
+        f"Solicitation: {g('solicitationTitle')} ({g('solicitationNumber')})",
+        f"Technology Areas: {g('technologyAreas', default='')}",
+        f"Modernization Priorities: {g('modernizationPriorities', default='')}",
+        "",
+        f"Objective:\n{trim(objective)}",
+        "",
+        f"Description:\n{trim(description)}",
+    ]
+    return "\n".join(str(p) for p in parts)
+
+
+def _agent_prompt(topic_text: str, resume_text: str, extra: str = "") -> str:
+    resume_block = resume_text.strip() or "(No resume provided.)"
+    return (
+        "APPLICANT CAPABILITIES / RESUME:\n"
+        f"{resume_block[:6000]}\n\n"
+        "DoD SBIR/STTR TOPIC:\n"
+        f"{topic_text}\n"
+        f"{extra}\n\n"
+        "Respond with ONLY the JSON described in your instructions."
+    )
+
+
+# ---- Orchestration -------------------------------------------------------
+
+async def run_single_agent(name: str, topic_text: str, resume_text: str, extra: str = "") -> dict[str, Any]:
+    spec = AGENTS[name]
+    out = await ollama_client.chat(
+        spec["system"],
+        _agent_prompt(topic_text, resume_text, extra),
+        temperature=0.3,
+        format_json=True,
+    )
+    result = _safe_json(out)
+    result["_role"] = spec["role"]
+    return result
+
+
+async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, Any]:
+    """Run the full council on a single topic. Returns {agents, council, model}."""
+    model = await ollama_client.resolve_model()
+    topic_text = summarize_topic(topic)
+
+    # Canari, Vien, Anthracite can run concurrently.
+    canari, vien, anthracite = await asyncio.gather(
+        run_single_agent("Canari", topic_text, resume_text),
+        run_single_agent("Vien", topic_text, resume_text),
+        run_single_agent("Anthracite", topic_text, resume_text),
+    )
+
+    # Davy synthesizes with the others' notes.
+    peer_notes = (
+        "\n\nPEER ASSESSMENTS:\n"
+        f"Canari (fit): {json.dumps(canari)[:2000]}\n"
+        f"Vien (technical): {json.dumps(vien)[:2000]}\n"
+        f"Anthracite (business): {json.dumps(anthracite)[:2000]}\n"
+    )
+    davy = await run_single_agent("Davy", topic_text, resume_text, extra=peer_notes)
+
+    agents = {"Canari": canari, "Vien": vien, "Anthracite": anthracite, "Davy": davy}
+
+    council_prompt = (
+        _agent_prompt(topic_text, resume_text)
+        + "\n\nAGENT ASSESSMENTS:\n"
+        + json.dumps(agents)[:6000]
+    )
+    council_out = await ollama_client.chat(
+        COUNCIL_SYSTEM, council_prompt, temperature=0.2, format_json=True
+    )
+    council = _safe_json(council_out)
+
+    return {"agents": agents, "council": council, "model": model}
+
+
+def extract_score_and_rec(council: dict[str, Any]) -> tuple[Optional[float], Optional[str]]:
+    score = council.get("fit_score")
+    try:
+        score = float(score) if score is not None else None
+    except (TypeError, ValueError):
+        score = None
+    rec = council.get("recommendation")
+    return score, rec

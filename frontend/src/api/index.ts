@@ -1,0 +1,163 @@
+import { api, API_BASE } from "./client";
+import type {
+  AgentMeta,
+  AnalysisRun,
+  Debrief,
+  OllamaStatus,
+  Proposal,
+  ResumeInfo,
+  SearchResponse,
+  Topic,
+  TrackedTopic,
+} from "../types";
+
+// ---- Topics (DSIP proxy) ----
+export interface SearchParams {
+  searchText?: string;
+  solicitationCycleNames?: string; // e.g. "openTopics"
+  topicReleaseStatus?: string; // e.g. "591,592"
+  component?: string;
+  program?: string;
+  technologyAreaIds?: string;
+  sortBy?: string;
+  size?: number;
+  page?: number;
+}
+
+export const TopicsApi = {
+  search: (params: SearchParams) =>
+    api.get<SearchResponse>("/topics/search", { params }).then((r) => r.data),
+  detail: (id: string) => api.get<Topic>(`/topics/${id}`).then((r) => r.data),
+  questions: (id: string) =>
+    api.get(`/topics/${id}/questions`).then((r) => r.data),
+  reference: (name: string, params?: Record<string, string>) =>
+    api.get(`/topics/reference/${name}`, { params }).then((r) => r.data),
+  downloadUrl: (id: string, fmt: "PDF" | "DOCX") =>
+    `${API_BASE}/topics/${id}/download/${fmt}`,
+};
+
+// ---- Analysis ----
+export const AnalysisApi = {
+  run: (topic_ids: string[], resume_id?: number) =>
+    api
+      .post<{ runs: AnalysisRun[] }>("/analysis/run", { topic_ids, resume_id })
+      .then((r) => r.data.runs),
+  list: () => api.get<AnalysisRun[]>("/analysis").then((r) => r.data),
+  get: (id: number) => api.get<AnalysisRun>(`/analysis/${id}`).then((r) => r.data),
+  latestForTopic: (topicId: string) =>
+    api.get<AnalysisRun>(`/analysis/topic/${topicId}`).then((r) => r.data),
+};
+
+// ---- Tracker ----
+export const TrackerApi = {
+  list: () => api.get<TrackedTopic[]>("/tracker").then((r) => r.data),
+  stages: () => api.get<string[]>("/tracker/stages").then((r) => r.data),
+  track: (body: Partial<TrackedTopic> & { topic_id: string; raw?: unknown }) =>
+    api.post<TrackedTopic>("/tracker", body).then((r) => r.data),
+  update: (
+    id: number,
+    body: { status?: string; notes?: string; outcome?: string }
+  ) => api.patch<TrackedTopic>(`/tracker/${id}`, body).then((r) => r.data),
+  remove: (id: number) => api.delete(`/tracker/${id}`).then((r) => r.data),
+};
+
+// ---- Proposals ----
+export const ProposalsApi = {
+  list: () => api.get<Proposal[]>("/proposals").then((r) => r.data),
+  get: (id: number) => api.get<Proposal>(`/proposals/${id}`).then((r) => r.data),
+  create: (body: Partial<Proposal>) =>
+    api.post<Proposal>("/proposals", body).then((r) => r.data),
+  update: (id: number, body: Partial<Proposal>) =>
+    api.put<Proposal>(`/proposals/${id}`, body).then((r) => r.data),
+  remove: (id: number) => api.delete(`/proposals/${id}`).then((r) => r.data),
+};
+
+// ---- Debriefs ----
+export const DebriefsApi = {
+  list: () => api.get<Debrief[]>("/debriefs").then((r) => r.data),
+  upload: (file: File, meta: { title?: string; topic_id?: string; proposal_id?: number }) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (meta.title) fd.append("title", meta.title);
+    if (meta.topic_id) fd.append("topic_id", meta.topic_id);
+    if (meta.proposal_id != null) fd.append("proposal_id", String(meta.proposal_id));
+    return api
+      .post<Debrief>("/debriefs", fd, { headers: { "Content-Type": "multipart/form-data" } })
+      .then((r) => r.data);
+  },
+  analyze: (id: number) =>
+    api.post<Debrief>(`/debriefs/${id}/analyze`).then((r) => r.data),
+  remove: (id: number) => api.delete(`/debriefs/${id}`).then((r) => r.data),
+};
+
+// ---- Resume ----
+export const ResumeApi = {
+  list: () => api.get<ResumeInfo[]>("/resume").then((r) => r.data),
+  active: () => api.get<ResumeInfo | null>("/resume/active").then((r) => r.data),
+  fromText: (name: string, text: string) =>
+    api.post<ResumeInfo>("/resume/text", { name, text }).then((r) => r.data),
+  upload: (file: File, name?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (name) fd.append("name", name);
+    return api
+      .post<ResumeInfo>("/resume/upload", fd, { headers: { "Content-Type": "multipart/form-data" } })
+      .then((r) => r.data);
+  },
+  update: (id: number, body: Partial<ResumeInfo>) =>
+    api.put<ResumeInfo>(`/resume/${id}`, body).then((r) => r.data),
+  remove: (id: number) => api.delete(`/resume/${id}`).then((r) => r.data),
+};
+
+// ---- System ----
+export const SystemApi = {
+  ollama: () => api.get<OllamaStatus>("/system/ollama").then((r) => r.data),
+  pull: (name?: string) =>
+    api.post("/system/ollama/pull", null, { params: name ? { name } : {} }).then((r) => r.data),
+  agents: () => api.get<AgentMeta[]>("/system/agents").then((r) => r.data),
+};
+
+// ---- Streaming helper (for live proposal feedback) ----
+export async function streamProposalFeedback(
+  body: { content: string; topic_id?: string; focus?: string },
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(`${API_BASE}/proposals/feedback-live`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Feedback failed: ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk(decoder.decode(value, { stream: true }));
+  }
+}
+
+export async function streamSavedFeedback(
+  proposalId: number,
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(`${API_BASE}/proposals/${proposalId}/feedback`, {
+    method: "POST",
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Feedback failed: ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk(decoder.decode(value, { stream: true }));
+  }
+}

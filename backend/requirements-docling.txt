@@ -1,0 +1,4 @@
+# Optional heavy dependency for high-quality OCR / document parsing.
+# Installed best-effort in the Docker image; the app falls back to
+# python-docx / pypdf when Docling is unavailable.
+docling==2.14.0
