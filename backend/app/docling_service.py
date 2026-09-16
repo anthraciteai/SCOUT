@@ -68,8 +68,12 @@ def extract_text(filename: str, data: bytes) -> str:
     """Extract text from an uploaded file (bytes)."""
     ext = os.path.splitext(filename)[1].lower()
 
-    # Try Docling first (write to a temp file since it works on paths)
-    if settings.use_docling and ext in (".pdf", ".docx", ".pptx", ".png", ".jpg", ".jpeg", ".tiff"):
+    # .docx extracts perfectly (and fast) with python-docx - no need for Docling.
+    if ext == ".docx":
+        return _extract_docx(data)
+
+    # Use Docling for formats that genuinely benefit from OCR / layout parsing.
+    if settings.use_docling and ext in (".pdf", ".pptx", ".png", ".jpg", ".jpeg", ".tiff"):
         tmp_dir = os.path.join(settings.data_dir, "uploads")
         os.makedirs(tmp_dir, exist_ok=True)
         tmp_path = os.path.join(tmp_dir, f"_tmp_{os.getpid()}{ext}")

@@ -17,6 +17,29 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 class RunRequest(BaseModel):
     topic_ids: list[str]
     resume_id: Optional[int] = None
+    # Optional summary metadata keyed by topic_id: {topic_code, title, component,
+    # program, topic_status, solicitation_title}. The details endpoint lacks these.
+    topics_meta: Optional[dict[str, dict]] = None
+
+
+_META_MAP = {
+    "topic_code": "topicCode",
+    "title": "topicTitle",
+    "component": "component",
+    "program": "program",
+    "topic_status": "topicStatus",
+    "solicitation_title": "solicitationTitle",
+}
+
+
+def _merge_meta(topic: dict, meta: Optional[dict]) -> dict:
+    if not meta:
+        return topic
+    for src, dst in _META_MAP.items():
+        val = meta.get(src)
+        if val and not topic.get(dst):
+            topic[dst] = val
+    return topic
 
 
 @router.post("/run")
@@ -36,6 +59,8 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
         # DSIP detail sometimes nests the topic
         if isinstance(topic, dict) and "topic" in topic and isinstance(topic["topic"], dict):
             topic = {**topic, **topic["topic"]}
+
+        topic = _merge_meta(topic, (req.topics_meta or {}).get(topic_id))
 
         result = await agents.analyze_topic(topic, resume_text)
         score, rec = agents.extract_score_and_rec(result.get("council", {}))

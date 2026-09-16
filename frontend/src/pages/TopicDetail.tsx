@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AnalysisApi, TopicsApi, TrackerApi } from "../api";
 import type { AnalysisRun, Topic } from "../types";
-import { topicCode, topicTitle, statusClass } from "./Browse";
+import { topicCode, topicTitle, statusClass, topicMeta } from "./Browse";
 import { CouncilCard } from "./Analysis";
 
 function stripHtml(s?: string) {
@@ -13,6 +13,8 @@ function stripHtml(s?: string) {
 export default function TopicDetail() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const summary = (location.state as { topic?: Topic } | null)?.topic;
   const [topic, setTopic] = useState<Topic | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [run, setRun] = useState<AnalysisRun | null>(null);
@@ -24,10 +26,13 @@ export default function TopicDetail() {
       setLoading(true);
       try {
         const t = await TopicsApi.detail(id);
-        const merged = (t as any)?.topic ? { ...(t as any), ...(t as any).topic } : t;
+        const nested = (t as any)?.topic ? { ...(t as any), ...(t as any).topic } : t;
+        // /details lacks title/code/status; merge in the summary if we have it.
+        const merged = summary ? { ...summary, ...nested } : nested;
         setTopic(merged);
       } catch {
-        setTopic(null);
+        // No details (e.g. very old topic) - fall back to summary if present.
+        setTopic(summary || null);
       }
       try {
         const q = await TopicsApi.questions(id);
@@ -47,7 +52,8 @@ export default function TopicDetail() {
   async function analyze() {
     setAnalyzing(true);
     try {
-      const runs = await AnalysisApi.run([id]);
+      const meta = topic ? { [id]: topicMeta(topic) } : undefined;
+      const runs = await AnalysisApi.run([id], meta);
       setRun(runs[0]);
     } finally {
       setAnalyzing(false);

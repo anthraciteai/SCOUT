@@ -4,6 +4,7 @@ import { AnalysisApi, ResumeApi } from "../api";
 import type { AnalysisRun, AgentResult, TeamRecommendation } from "../types";
 import { useSelection } from "../selection";
 import TeamCard from "../components/TeamCard";
+import { topicMeta } from "./Browse";
 
 const AGENT_COLORS: Record<string, string> = {
   Canari: "#f0c419",
@@ -151,7 +152,9 @@ export default function Analysis() {
     setRuns([]);
     setProgress(`Running the council on ${ids.length} topic(s) with gpt-oss:20b… this can take a while.`);
     try {
-      const results = await AnalysisApi.run(ids);
+      const meta: Record<string, ReturnType<typeof topicMeta>> = {};
+      for (const tid of ids) meta[tid] = topicMeta(selected[tid]);
+      const results = await AnalysisApi.run(ids, meta);
       setRuns(results);
       setProgress("");
     } catch (e: any) {

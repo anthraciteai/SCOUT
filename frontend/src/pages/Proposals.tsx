@@ -7,12 +7,14 @@ import {
 } from "../api";
 import type { Proposal, TeamRecommendation } from "../types";
 import TeamCard from "../components/TeamCard";
+import TopicPicker from "../components/TopicPicker";
 
 export default function Proposals() {
   const [list, setList] = useState<Proposal[]>([]);
   const [current, setCurrent] = useState<Proposal | null>(null);
   const [title, setTitle] = useState("");
   const [topicId, setTopicId] = useState("");
+  const [topicCode, setTopicCode] = useState("");
   const [content, setContent] = useState("");
   const [status, setStatus] = useState("draft");
   const [feedback, setFeedback] = useState("");
@@ -33,22 +35,32 @@ export default function Proposals() {
     setCurrent(p);
     setTitle(p.title);
     setTopicId(p.topic_id || "");
+    setTopicCode(p.topic_code || "");
     setContent(p.content);
     setStatus(p.status);
     setFeedback("");
+    setTeamRec(null);
   }
 
   function newDraft() {
     setCurrent(null);
     setTitle("New Proposal");
     setTopicId("");
+    setTopicCode("");
     setContent("");
     setStatus("draft");
     setFeedback("");
+    setTeamRec(null);
   }
 
   async function save() {
-    const body = { title, content, topic_id: topicId || undefined, status };
+    const body = {
+      title,
+      content,
+      topic_id: topicId || undefined,
+      topic_code: topicCode || undefined,
+      status,
+    };
     const saved = current
       ? await ProposalsApi.update(current.id, body)
       : await ProposalsApi.create(body);
@@ -148,6 +160,7 @@ export default function Proposals() {
               <div style={{ fontSize: 14, fontWeight: 600 }}>{p.title}</div>
               <div className="meta">
                 {p.status} · {new Date(p.updated_at).toLocaleDateString()}
+                {p.topic_code ? ` · ${p.topic_code}` : ""}
               </div>
               <button
                 className="ghost small danger"
@@ -180,12 +193,15 @@ export default function Proposals() {
                 <option value="not_selected">not selected</option>
               </select>
             </div>
-            <input
-              style={{ marginTop: 8, width: "100%" }}
-              value={topicId}
-              onChange={(e) => setTopicId(e.target.value)}
-              placeholder="Target topic ID (optional, e.g. 1d12a337…_86654)"
-            />
+            <div style={{ marginTop: 8 }}>
+              <TopicPicker
+                value={topicId}
+                onChange={(sel) => {
+                  setTopicId(sel.topic_id);
+                  setTopicCode(sel.topic_code || "");
+                }}
+              />
+            </div>
             <textarea
               style={{ marginTop: 8 }}
               rows={16}

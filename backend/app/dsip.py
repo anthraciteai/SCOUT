@@ -81,7 +81,10 @@ async def search_topics(search_param: str, size: int = 10, page: int = 0) -> Any
 
 
 async def get_topic(topic_id: str) -> Any:
-    return await get_json(f"/topics/{topic_id}")
+    # The rich topic content lives at /details (objective, description, phases,
+    # keywords, tech/focus areas). Summary metadata (title/code/status) comes
+    # from the search endpoint and is merged in by callers when available.
+    return await get_json(f"/topics/{topic_id}/details")
 
 
 async def get_topic_questions(topic_id: str) -> Any:

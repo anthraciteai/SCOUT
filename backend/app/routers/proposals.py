@@ -38,6 +38,8 @@ class ProposalUpdate(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     status: Optional[str] = None
+    topic_id: Optional[str] = None
+    topic_code: Optional[str] = None
 
 
 class LiveFeedbackRequest(BaseModel):

@@ -19,6 +19,17 @@ export function statusClass(s?: string) {
   return "muted";
 }
 
+export function topicMeta(t: Topic) {
+  return {
+    topic_code: topicCode(t) || undefined,
+    title: t.topicTitle || t.title || undefined,
+    component: t.component,
+    program: t.program,
+    topic_status: t.topicStatus,
+    solicitation_title: t.solicitationTitle,
+  };
+}
+
 export default function Browse() {
   const [searchText, setSearchText] = useState("");
   const [cycle, setCycle] = useState("openTopics");
@@ -156,7 +167,7 @@ export default function Browse() {
                   onChange={() => toggle(t)}
                   style={{ width: 16, height: 16 }}
                 />
-                <Link to={`/topic/${t.topicId}`} className="topic-title">
+                <Link to={`/topic/${t.topicId}`} state={{ topic: t }} className="topic-title">
                   {topicCode(t)} — {topicTitle(t)}
                 </Link>
               </div>

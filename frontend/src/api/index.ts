@@ -38,10 +38,19 @@ export const TopicsApi = {
 };
 
 // ---- Analysis ----
+export interface TopicMeta {
+  topic_code?: string;
+  title?: string;
+  component?: string;
+  program?: string;
+  topic_status?: string;
+  solicitation_title?: string;
+}
+
 export const AnalysisApi = {
-  run: (topic_ids: string[], resume_id?: number) =>
+  run: (topic_ids: string[], topics_meta?: Record<string, TopicMeta>, resume_id?: number) =>
     api
-      .post<{ runs: AnalysisRun[] }>("/analysis/run", { topic_ids, resume_id })
+      .post<{ runs: AnalysisRun[] }>("/analysis/run", { topic_ids, resume_id, topics_meta })
       .then((r) => r.data.runs),
   list: () => api.get<AnalysisRun[]>("/analysis").then((r) => r.data),
   get: (id: number) => api.get<AnalysisRun>(`/analysis/${id}`).then((r) => r.data),
