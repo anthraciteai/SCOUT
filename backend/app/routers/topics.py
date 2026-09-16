@@ -10,11 +10,20 @@ from .. import dsip
 router = APIRouter(prefix="/api/topics", tags=["topics"])
 
 
+# scope -> (solicitationCycleNames, topicReleaseStatus)
+# 591 = Pre-Release, 592 = Open. Empty lists = all statuses (incl. closed).
+SCOPE_MAP: dict[str, tuple[list[str], list[int]]] = {
+    "open": (["openTopics"], [591, 592]),   # open + pre-release (default)
+    "openonly": (["openTopics"], [592]),
+    "prerelease": (["openTopics"], [591]),
+    "all": ([], []),                         # everything, including closed
+}
+
+
 @router.get("/search")
 async def search(
     searchText: Optional[str] = None,
-    solicitationCycleNames: Optional[str] = Query(None, description="comma separated, e.g. openTopics"),
-    topicReleaseStatus: Optional[str] = Query(None, description="comma separated ids, e.g. 591,592"),
+    scope: str = Query("open", description="open | openonly | prerelease | all"),
     component: Optional[str] = None,
     program: Optional[str] = None,
     technologyAreaIds: Optional[str] = Query(None, description="comma separated ids"),
@@ -25,22 +34,15 @@ async def search(
     def _ids(s: Optional[str]) -> Optional[list[int]]:
         if not s:
             return None
-        out = []
-        for x in s.split(","):
-            x = x.strip()
-            if x.isdigit():
-                out.append(int(x))
+        out = [int(x.strip()) for x in s.split(",") if x.strip().isdigit()]
         return out or None
 
-    def _list(s: Optional[str]) -> Optional[list[str]]:
-        if not s:
-            return None
-        return [x.strip() for x in s.split(",") if x.strip()] or None
+    cycles, statuses = SCOPE_MAP.get(scope, SCOPE_MAP["open"])
 
     search_param = dsip.build_search_param(
         search_text=searchText,
-        solicitation_cycle_names=_list(solicitationCycleNames) or ["openTopics"],
-        topic_release_status=_ids(topicReleaseStatus) or [591, 592],
+        solicitation_cycle_names=cycles,
+        topic_release_status=statuses,
         component=component,
         program=program,
         technology_area_ids=_ids(technologyAreaIds),
@@ -76,7 +78,7 @@ async def questions(topic_id: str):
 
 
 @router.get("/{topic_id}/download/{fmt}")
-async def download(topic_id: str, fmt: str):
+async def download(topic_id: str, fmt: str, inline: bool = False):
     fmt = fmt.upper()
     if fmt not in ("PDF", "DOCX"):
         raise HTTPException(status_code=400, detail="fmt must be PDF or DOCX")
@@ -88,10 +90,12 @@ async def download(topic_id: str, fmt: str):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
     ext = "pdf" if fmt == "PDF" else "docx"
+    # inline lets the browser render the PDF in an <iframe> instead of downloading.
+    disp = "inline" if (inline and fmt == "PDF") else "attachment"
     return Response(
         content=resp.content,
         media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="topic_{topic_id}.{ext}"'},
+        headers={"Content-Disposition": f'{disp}; filename="topic_{topic_id}.{ext}"'},
     )
 
 

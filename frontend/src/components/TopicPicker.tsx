@@ -71,7 +71,7 @@ export default function TopicPicker({ value, onChange }: Props) {
     if (!search.trim()) return;
     setSearching(true);
     try {
-      const res = await TopicsApi.search({ searchText: search, size: 8 });
+      const res = await TopicsApi.search({ searchText: search, size: 8, scope: "all" });
       setResults(res.data || []);
     } catch {
       setResults([]);
@@ -187,8 +187,7 @@ export default function TopicPicker({ value, onChange }: Props) {
             </button>
           </div>
           <div className="meta" style={{ marginTop: 6 }}>
-            Text search covers open/pre-release topics. For closed/older topics, paste the topic ID
-            above.
+            Searches all topics (open and closed) so you can link older solicitations.
           </div>
           {results.map((t) => (
             <div key={t.topicId} className="row spread" style={{ padding: "6px 0" }}>

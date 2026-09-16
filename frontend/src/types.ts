@@ -14,6 +14,14 @@ export interface Topic {
   noOfPublishedQuestions?: number;
   objective?: string;
   description?: string;
+  // epoch-ms date fields (present on search summaries)
+  topicPreReleaseStartDate?: number;
+  topicPreReleaseEndDate?: number;
+  topicStartDate?: number;
+  topicEndDate?: number;
+  topicQAStartDate?: number;
+  topicQAEndDate?: number;
+  keywords?: string;
   [key: string]: unknown;
 }
 

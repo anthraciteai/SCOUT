@@ -56,14 +56,19 @@ def build_search_param(
     component: Optional[str] = None,
     program: Optional[str] = None,
 ) -> str:
-    """Build the JSON `searchParam` string DSIP expects (URL-encoded by httpx)."""
+    """Build the JSON `searchParam` string DSIP expects (URL-encoded by httpx).
+
+    Note: empty lists are sent as-is (an empty solicitationCycleNames /
+    topicReleaseStatus means "all statuses", incl. closed topics). Callers decide
+    the defaults rather than baking "openTopics" in here.
+    """
     payload = {
         "searchText": search_text,
         "components": components,
         "programYear": program_year,
-        "solicitationCycleNames": solicitation_cycle_names or ["openTopics"],
+        "solicitationCycleNames": solicitation_cycle_names if solicitation_cycle_names is not None else [],
         "releaseNumbers": release_numbers or [],
-        "topicReleaseStatus": topic_release_status or [591, 592],
+        "topicReleaseStatus": topic_release_status if topic_release_status is not None else [],
         "modernizationPriorities": modernization_priorities or [],
         "sortBy": sort_by,
         "technologyAreaIds": technology_area_ids or [],

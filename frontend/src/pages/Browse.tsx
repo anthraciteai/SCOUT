@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { TopicsApi, TrackerApi } from "../api";
+import type { TopicScope } from "../api";
 import type { Topic } from "../types";
 import { useSelection } from "../selection";
 
@@ -19,6 +20,43 @@ export function statusClass(s?: string) {
   return "muted";
 }
 
+export function fmtDate(ms?: number): string {
+  if (!ms || typeof ms !== "number") return "—";
+  try {
+    return new Date(ms).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+/** Render the key release + due/close dates for a topic. */
+export function TopicDates({ t }: { t: Topic }) {
+  const preStart = t.topicPreReleaseStartDate;
+  const openStart = t.topicStartDate;
+  const close = t.topicEndDate; // proposals due / topic close
+  return (
+    <div className="row" style={{ gap: 14, flexWrap: "wrap" }}>
+      {preStart && (
+        <span className="meta">
+          <strong>Pre-release:</strong> {fmtDate(preStart)}
+        </span>
+      )}
+      {openStart && (
+        <span className="meta">
+          <strong>Opens:</strong> {fmtDate(openStart)}
+        </span>
+      )}
+      <span className="meta" style={{ color: close ? "var(--text)" : "var(--muted)" }}>
+        <strong>Due/Close:</strong> {fmtDate(close)}
+      </span>
+    </div>
+  );
+}
+
 export function topicMeta(t: Topic) {
   return {
     topic_code: topicCode(t) || undefined,
@@ -32,9 +70,8 @@ export function topicMeta(t: Topic) {
 
 export default function Browse() {
   const [searchText, setSearchText] = useState("");
-  const [cycle, setCycle] = useState("openTopics");
+  const [scope, setScope] = useState<TopicScope>("open");
   const [program, setProgram] = useState("");
-  const [status, setStatus] = useState("591,592"); // Pre-Release + Open
   const [page, setPage] = useState(0);
   const [data, setData] = useState<Topic[]>([]);
   const [total, setTotal] = useState(0);
@@ -50,8 +87,7 @@ export default function Browse() {
     try {
       const res = await TopicsApi.search({
         searchText: searchText || undefined,
-        solicitationCycleNames: cycle || undefined,
-        topicReleaseStatus: status || undefined,
+        scope,
         program: program || undefined,
         size: PAGE_SIZE,
         page: p,
@@ -112,15 +148,11 @@ export default function Browse() {
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
           />
-          <select value={cycle} onChange={(e) => setCycle(e.target.value)}>
-            <option value="openTopics">Open Topics</option>
-            <option value="">All cycles</option>
-          </select>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="591,592">Pre-Release + Open</option>
-            <option value="592">Open only</option>
-            <option value="591">Pre-Release only</option>
-            <option value="">Any status</option>
+          <select value={scope} onChange={(e) => setScope(e.target.value as TopicScope)}>
+            <option value="open">Open + Pre-Release</option>
+            <option value="openonly">Open only</option>
+            <option value="prerelease">Pre-Release only</option>
+            <option value="all">All (incl. closed)</option>
           </select>
           <select value={program} onChange={(e) => setProgram(e.target.value)}>
             <option value="">SBIR + STTR</option>
@@ -176,6 +208,9 @@ export default function Browse() {
                 {typeof t.noOfPublishedQuestions === "number" && (
                   <> · {t.noOfPublishedQuestions} Q&amp;A</>
                 )}
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <TopicDates t={t} />
               </div>
             </div>
             <div className="row">

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AnalysisApi, TopicsApi, TrackerApi } from "../api";
 import type { AnalysisRun, Topic } from "../types";
-import { topicCode, topicTitle, statusClass, topicMeta } from "./Browse";
+import { topicCode, topicTitle, statusClass, topicMeta, TopicDates } from "./Browse";
 import { CouncilCard } from "./Analysis";
 
 function stripHtml(s?: string) {
@@ -20,6 +20,7 @@ export default function TopicDetail() {
   const [run, setRun] = useState<AnalysisRun | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"pdf" | "text">("pdf");
 
   useEffect(() => {
     (async () => {
@@ -88,11 +89,16 @@ export default function TopicDetail() {
       <h1 style={{ marginTop: 12 }}>
         {topicCode(topic)} — {topicTitle(topic)}
       </h1>
-      <div className="row" style={{ marginBottom: 12 }}>
-        <span className={`pill ${statusClass(topic.topicStatus)}`}>{topic.topicStatus}</span>
-        <span className="tag">{topic.component}</span>
-        <span className="tag">{topic.program}</span>
-        <span className="meta">{topic.solicitationTitle}</span>
+      <div className="row" style={{ marginBottom: 8 }}>
+        {topic.topicStatus && (
+          <span className={`pill ${statusClass(topic.topicStatus)}`}>{topic.topicStatus}</span>
+        )}
+        {topic.component && <span className="tag">{topic.component}</span>}
+        {topic.program && <span className="tag">{topic.program}</span>}
+        {topic.solicitationTitle && <span className="meta">{topic.solicitationTitle}</span>}
+      </div>
+      <div className="card" style={{ padding: "10px 14px", marginBottom: 12 }}>
+        <TopicDates t={topic} />
       </div>
 
       <div className="row" style={{ marginBottom: 16 }}>
@@ -116,18 +122,68 @@ export default function TopicDetail() {
         </div>
       )}
 
-      {objective && (
-        <div className="card">
-          <h3>Objective</h3>
-          <p style={{ fontSize: 14, lineHeight: 1.6 }}>{objective}</p>
+      <div className="card">
+        <div className="row spread">
+          <h3 style={{ margin: 0 }}>Topic content</h3>
+          <div className="row" style={{ gap: 6 }}>
+            <button
+              className={view === "pdf" ? "small" : "ghost small"}
+              onClick={() => setView("pdf")}
+            >
+              PDF
+            </button>
+            <button
+              className={view === "text" ? "small" : "ghost small"}
+              onClick={() => setView("text")}
+            >
+              Text
+            </button>
+          </div>
         </div>
-      )}
-      {description && (
-        <div className="card">
-          <h3>Description</h3>
-          <p style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{description}</p>
-        </div>
-      )}
+
+        {view === "pdf" ? (
+          <div style={{ marginTop: 10 }}>
+            <iframe
+              title="Topic PDF"
+              src={TopicsApi.downloadUrl(id, "PDF", true)}
+              style={{
+                width: "100%",
+                height: "80vh",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                background: "#fff",
+              }}
+            />
+            <div className="meta" style={{ marginTop: 6 }}>
+              If the PDF doesn't render,{" "}
+              <a href={TopicsApi.downloadUrl(id, "PDF", true)} target="_blank" rel="noreferrer">
+                open it in a new tab
+              </a>
+              .
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {objective && (
+              <>
+                <h3>Objective</h3>
+                <p style={{ fontSize: 14, lineHeight: 1.6 }}>{objective}</p>
+              </>
+            )}
+            {description && (
+              <>
+                <h3>Description</h3>
+                <p style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                  {description}
+                </p>
+              </>
+            )}
+            {!objective && !description && (
+              <div className="meta">No text content available — try the PDF.</div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="card">
         <h3>Q&amp;A ({questions.length})</h3>

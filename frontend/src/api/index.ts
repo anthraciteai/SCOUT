@@ -13,10 +13,11 @@ import type {
 } from "../types";
 
 // ---- Topics (DSIP proxy) ----
+export type TopicScope = "open" | "openonly" | "prerelease" | "all";
+
 export interface SearchParams {
   searchText?: string;
-  solicitationCycleNames?: string; // e.g. "openTopics"
-  topicReleaseStatus?: string; // e.g. "591,592"
+  scope?: TopicScope; // open (default) | openonly | prerelease | all (incl. closed)
   component?: string;
   program?: string;
   technologyAreaIds?: string;
@@ -33,8 +34,8 @@ export const TopicsApi = {
     api.get(`/topics/${id}/questions`).then((r) => r.data),
   reference: (name: string, params?: Record<string, string>) =>
     api.get(`/topics/reference/${name}`, { params }).then((r) => r.data),
-  downloadUrl: (id: string, fmt: "PDF" | "DOCX") =>
-    `${API_BASE}/topics/${id}/download/${fmt}`,
+  downloadUrl: (id: string, fmt: "PDF" | "DOCX", inline = false) =>
+    `${API_BASE}/topics/${id}/download/${fmt}${inline ? "?inline=1" : ""}`,
 };
 
 // ---- Analysis ----
