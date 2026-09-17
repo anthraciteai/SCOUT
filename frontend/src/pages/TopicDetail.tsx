@@ -5,6 +5,7 @@ import type { AnalysisRun, Topic, TrackedTopic } from "../types";
 import { topicCode, topicTitle, statusClass, topicMeta, TopicDates } from "./Browse";
 import { CouncilCard } from "./Analysis";
 import AgentStepper from "../components/AgentStepper";
+import OrgDesk from "../components/OrgDesk";
 import { useToast } from "../toast";
 import { sanitizeHtml, parseAnswer } from "../util/html";
 
@@ -67,7 +68,7 @@ export default function TopicDetail() {
     setAnalyzing(true);
     try {
       const meta = topic ? { [id]: topicMeta(topic) } : undefined;
-      const runs = await AnalysisApi.run([id], meta);
+      const runs = await AnalysisApi.run([id], meta, undefined, Boolean(run));
       setRun(runs[0]);
     } finally {
       setAnalyzing(false);
@@ -216,9 +217,18 @@ export default function TopicDetail() {
 
       {run?.result && (
         <div style={{ marginBottom: 16 }}>
+          {run.cached && (
+            <div className="meta" style={{ marginBottom: 6 }}>
+              Serving cached council from the vault — Re-run Analysis to regenerate.
+            </div>
+          )}
           <CouncilCard run={run} />
         </div>
       )}
+
+      <div style={{ marginBottom: 16 }}>
+        <OrgDesk topicId={id} title={topicTitle(topic)} topicCode={topicCode(topic)} />
+      </div>
 
       <div style={{ marginBottom: 16 }}>
         <AgentStepper topic={topic} />

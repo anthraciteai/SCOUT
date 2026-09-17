@@ -70,6 +70,8 @@ export interface AnalysisRun {
   heavy_lift?: number;
   recommendation?: string;
   created_at: string;
+  cached?: boolean;
+  cached_at?: string;
   result?: {
     agents: Record<string, AgentResult>;
     council: CouncilResult;
@@ -81,6 +83,8 @@ export interface AgentRunResponse {
   agent: string;
   result: AgentResult;
   model: string;
+  cached?: boolean;
+  cached_at?: string;
 }
 
 export interface TrackedTopic {
@@ -120,15 +124,52 @@ export interface Debrief {
   created_at: string;
 }
 
+export interface ResumeExtract {
+  summary?: string;
+  skills?: string[];
+  domains?: string[];
+  search_queries?: string[];
+  keywords?: string[];
+  _source?: string;
+}
+
 export interface ResumeInfo {
   id: number;
   name: string;
   filename?: string;
   is_active: boolean;
+  kind?: "me" | "company";
   chars: number;
   text?: string;
+  extract?: ResumeExtract | null;
+  extracted_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface MatchItem {
+  id: number;
+  topic_id: string;
+  topic_code?: string;
+  title?: string;
+  component?: string;
+  program?: string;
+  topic_status?: string;
+  score: number;
+  reasons: string[];
+  queries: string[];
+  topic?: Topic;
+  created_at?: string;
+}
+
+export interface MatchInbox {
+  resume: { id: number; name: string; chars: number } | null;
+  profile: ResumeExtract | null;
+  scanned_at: string | null;
+  queries: string[];
+  match_count: number;
+  model: string;
+  matches: MatchItem[];
 }
 
 export interface RoleToAdd {
@@ -171,4 +212,67 @@ export interface OllamaStatus {
 export interface AgentMeta {
   name: string;
   role: string;
+}
+
+export interface ScoutUser {
+  user_id: string;
+  display_name: string;
+  company_id?: string;
+  groups?: string[];
+  auth?: string;
+  skills?: string[];
+  sbirs?: string[];
+  in_company?: boolean;
+}
+
+export interface AuthStatus {
+  auth_disabled: boolean;
+  keycloak_url?: string;
+  keycloak_realm?: string;
+  keycloak_client_id?: string;
+  default_company: string;
+  users: { user_id: string; display_name: string }[];
+}
+
+export interface OrgEmployee {
+  user_id: string;
+  display_name: string;
+  skills: string[];
+  sbirs: string[];
+}
+
+export interface OrgCompany {
+  company_id: string;
+  mission: string;
+  products: string;
+  employees: OrgEmployee[];
+  groups: { group_id: string; members: string[]; sbirs: string[] }[];
+  sbirs: string[];
+}
+
+export interface SbirWorkspace {
+  topic_id: string;
+  title?: string;
+  topic_code?: string;
+  cached_council: boolean;
+  cached_flint: boolean;
+  has_shared_proposal: boolean;
+  has_my_draft: boolean;
+  writers: string[];
+  cached_at?: string;
+  shared_proposal?: string;
+  shared_notes?: string;
+  my_draft?: string;
+  my_notes?: string;
+  my_council?: { result?: unknown; cached_at?: string; model?: string } | null;
+  shared_council?: { result?: unknown; cached_at?: string; model?: string } | null;
+  my_flint?: { result?: unknown; cached_at?: string; model?: string } | null;
+  teammates?: {
+    user_id: string;
+    display_name: string;
+    skills: string[];
+    has_flint: boolean;
+    has_draft: boolean;
+  }[];
+  paths?: Record<string, string>;
 }

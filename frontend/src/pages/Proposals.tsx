@@ -152,7 +152,7 @@ export default function Proposals() {
     <div>
       <h1>Proposals</h1>
       <p className="subtitle">
-        Draft proposals and get live LLM feedback while you write (gpt-oss:20b). A full review also
+        Draft proposals and get live LLM feedback while you write. A full review also
         pulls in the target topic and any uploaded debriefs.
       </p>
 

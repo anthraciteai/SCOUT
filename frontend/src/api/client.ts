@@ -8,4 +8,13 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+api.interceptors.request.use((cfg) => {
+  const t = localStorage.getItem("scout_token");
+  if (t) {
+    cfg.headers = cfg.headers || {};
+    cfg.headers.Authorization = `Bearer ${t}`;
+  }
+  return cfg;
+});
+
 export const API_BASE = baseURL;

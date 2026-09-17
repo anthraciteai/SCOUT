@@ -13,6 +13,9 @@ class Resume(SQLModel, table=True):
     filename: Optional[str] = None
     text: str = ""
     is_active: bool = True
+    kind: Optional[str] = Field(default="company")  # "me" | "company"
+    extract_json: Optional[str] = None  # structured profile for the matcher
+    extracted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -69,6 +72,37 @@ class Debrief(SQLModel, table=True):
     filename: Optional[str] = None
     extracted_text: str = ""
     analysis: Optional[str] = None             # LLM analysis of the feedback
+    created_at: datetime = Field(default_factory=_now)
+
+
+class OpportunityMatch(SQLModel, table=True):
+    """A ranked opportunity from the last matcher scan (not a council run)."""
+
+    __tablename__ = "opportunity_match"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    topic_id: str = Field(index=True)
+    resume_id: Optional[int] = Field(default=None, index=True)
+    topic_code: Optional[str] = None
+    title: Optional[str] = None
+    component: Optional[str] = None
+    program: Optional[str] = None
+    topic_status: Optional[str] = None
+    score: float = 0.0  # 0-100 keyword overlap
+    reasons_json: str = "[]"
+    queries_json: str = "[]"  # which profile queries retrieved this
+    raw_json: Optional[str] = None
+    created_at: datetime = Field(default_factory=_now)
+
+
+class MatchScan(SQLModel, table=True):
+    """Metadata for the latest matcher pass."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    resume_id: Optional[int] = Field(default=None, index=True)
+    queries_json: str = "[]"
+    match_count: int = 0
+    model: str = ""
     created_at: datetime = Field(default_factory=_now)
 
 

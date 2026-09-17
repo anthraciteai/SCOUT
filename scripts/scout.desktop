@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SCOUT
+Comment=Anthracite SCOUT — qualified SBIR topics from your resume
+Exec=/home/melgar/Desktop/scout/scripts/scout-open.sh
+Icon=applications-internet
+Terminal=false
+Categories=Network;Office;
+StartupNotify=true

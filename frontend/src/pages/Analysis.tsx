@@ -5,6 +5,7 @@ import type { AnalysisRun, AgentResult, TeamRecommendation, HewerResult } from "
 import { useSelection } from "../selection";
 import TeamCard from "../components/TeamCard";
 import HewerCard, { liftColor, liftLabel } from "../components/HewerCard";
+import FlintCard, { type FlintResult } from "../components/FlintCard";
 import { topicMeta } from "./Browse";
 
 const AGENT_COLORS: Record<string, string> = {
@@ -13,6 +14,7 @@ const AGENT_COLORS: Record<string, string> = {
   Anthracite: "#9aa4b2",
   Collier: "#c98b3a",
   Hewer: "#e0704f",
+  Flint: "#e6c07b",
   Davy: "#3fb950",
 };
 
@@ -66,8 +68,9 @@ export function CouncilCard({ run }: { run: AnalysisRun }) {
   const allAgents = run.result?.agents || {};
   const collier = allAgents["Collier"] as TeamRecommendation | undefined;
   const hewer = allAgents["Hewer"] as HewerResult | undefined;
+  const flint = allAgents["Flint"] as FlintResult | undefined;
   const agents = Object.fromEntries(
-    Object.entries(allAgents).filter(([k]) => k !== "Collier" && k !== "Hewer")
+    Object.entries(allAgents).filter(([k]) => k !== "Collier" && k !== "Hewer" && k !== "Flint")
   );
   const score = council.fit_score ?? run.fit_score;
   const scoreColor =
@@ -136,6 +139,15 @@ export function CouncilCard({ run }: { run: AnalysisRun }) {
         </div>
       )}
 
+      {flint && (
+        <div
+          className="card"
+          style={{ marginTop: 10, background: "var(--panel-2)", borderColor: "#e6c07b" }}
+        >
+          <FlintCard rec={flint} />
+        </div>
+      )}
+
       {collier && (
         <div
           className="card"
@@ -165,10 +177,12 @@ export default function Analysis() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("");
   const [hasResume, setHasResume] = useState<boolean | null>(null);
+  const [hasMe, setHasMe] = useState<boolean | null>(null);
   const [history, setHistory] = useState<AnalysisRun[]>([]);
 
   useEffect(() => {
     ResumeApi.active().then((r) => setHasResume(Boolean(r && r.chars > 0)));
+    ResumeApi.me().then((r) => setHasMe(Boolean(r && r.chars > 0)));
     AnalysisApi.list().then(setHistory).catch(() => {});
   }, []);
 
@@ -176,11 +190,11 @@ export default function Analysis() {
     if (ids.length === 0) return;
     setRunning(true);
     setRuns([]);
-    setProgress(`Running the council on ${ids.length} topic(s) with gpt-oss:20b… this can take a while.`);
+    setProgress(`Running the council on ${ids.length} topic(s)… this can take a while.`);
     try {
       const meta: Record<string, ReturnType<typeof topicMeta>> = {};
       for (const tid of ids) meta[tid] = topicMeta(selected[tid]);
-      const results = await AnalysisApi.run(ids, meta);
+      const results = await AnalysisApi.run(ids, meta, undefined, false);
       setRuns(results);
       setProgress("");
     } catch (e: any) {
@@ -192,18 +206,24 @@ export default function Analysis() {
 
   return (
     <div>
-      <h1>Analysis</h1>
+      <h1>Council</h1>
       <p className="subtitle">
-        Run the agent council — <strong>Canari</strong> (fit), <strong>Vien</strong> (technical),{" "}
-        <strong>Anthracite</strong> (business dev), <strong>Collier</strong> (who to add),{" "}
-        <strong>Hewer</strong> (heavy lift + adaptation), and <strong>Davy</strong> (capture) — on
-        selected topics against your resume, for a GO / NO-GO recommendation.
+        Optional deep pass — <strong>Canari</strong>, <strong>Vien</strong>,{" "}
+        <strong>Anthracite</strong>, <strong>Collier</strong>, <strong>Hewer</strong>,{" "}
+        <strong>Flint</strong> (creative — your tools), and <strong>Davy</strong>. Inbox ranking
+        does not run this automatically.
       </p>
 
       {hasResume === false && (
         <div className="card" style={{ borderColor: "var(--yellow)" }}>
           No active resume found. Add your capabilities in{" "}
-          <Link to="/settings">Settings</Link> so the agents can judge fit.
+          <Link to="/profile">Profile</Link> so the agents can judge fit.
+        </div>
+      )}
+      {hasResume && hasMe === false && (
+        <div className="card" style={{ borderColor: "#e6c07b" }}>
+          Flint needs a resume marked <strong>ME</strong> or it will only spark from the
+          company pack. Upload yours on <Link to="/profile">Profile</Link>.
         </div>
       )}
 
@@ -218,7 +238,8 @@ export default function Analysis() {
         </div>
         {ids.length === 0 && (
           <div className="meta" style={{ marginTop: 8 }}>
-            No topics selected. Go to <Link to="/">Browse Topics</Link> and check some.
+            No topics selected. Go to <Link to="/">Inbox</Link> or{" "}
+            <Link to="/browse">Browse</Link> and pick some.
           </div>
         )}
         {ids.map((tid) => {

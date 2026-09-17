@@ -1,0 +1,12 @@
+[Unit]
+Description=Scan DoD SBIR topics for Anthracite twice a day
+
+[Timer]
+OnBootSec=3min
+OnCalendar=*-*-* 07:30:00
+OnCalendar=*-*-* 15:30:00
+Persistent=true
+Unit=scout-scan.service
+
+[Install]
+WantedBy=timers.target

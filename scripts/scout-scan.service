@@ -1,0 +1,10 @@
+[Unit]
+Description=SCOUT DSIP scan — rank open topics against Anthracite capabilities
+After=scout.service
+Wants=scout.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/melgar/Desktop/scout
+ExecStart=/home/melgar/Desktop/scout/scripts/scout-scan.sh
+TimeoutStartSec=300

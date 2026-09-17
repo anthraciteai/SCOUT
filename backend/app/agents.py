@@ -1,4 +1,4 @@
-"""The SBIR Scout agent council.
+"""The SCOUT agent council.
 
 Each agent is a persona with a focused role. They analyze a DSIP topic against
 the user's resume/capabilities and return structured JSON. Davy + the Council
@@ -87,13 +87,45 @@ AGENTS: dict[str, dict[str, str]] = {
             '"effort_breakdown": [{"area": string, "effort": "low|medium|high"}]}.'
         ),
     },
+    "Flint": {
+        "role": "Creative toolwright",
+        "temperature": "0.85",
+        "system": (
+            "You are Flint. You strike sparks from tools THIS PERSON already knows. You are SUPER CREATIVE "
+            "but you never invent a skill, language, platform, or product that is not in the ME resume "
+            "(the section labeled ME, or the whole resume if unlabeled). Company product text is context, "
+            "not a license to hallucinate personal experience.\n"
+            "Your job: invent a distinctive technical approach to this DoD SBIR/STTR topic that ONLY this "
+            "person could pitch, because it recombines their real toolbox in an unexpected way.\n"
+            "Rules:\n"
+            "- Name specific tools from the resume (software, hardware, frameworks, radios, GCS, TAK, "
+            "PX4, Ollama, Docker, languages, etc.).\n"
+            "- Each spark must say WHICH of their tools is used and HOW it maps to the topic.\n"
+            "- Prefer surprising but defensible pairings (e.g. TAK + ULog health as a COP overlay; "
+            "Ollama-on-Jetson as the disconnected inference node; VEIN C2 leases as the safety gate "
+            "for an autonomy topic).\n"
+            "- Offer 3-5 sparks ranked by originality. Include one left-field spark that is still "
+            "deliverable with their tools.\n"
+            "- Call out tools they have that an obvious competitor would not think to use.\n"
+            "- do_not_fake: topic needs they should NOT pretend to have.\n"
+            "If there is no ME resume, say so in persona_read and give weaker, company-only sparks.\n"
+            "Return ONLY JSON with keys: "
+            '{"persona_read": string, '
+            '"tools_in_play": [{"tool": string, "from_resume": string, "role_in_this_bid": string}], '
+            '"sparks": [{"title": string, "hook": string, "how": [string], "tools": [string], '
+            '"originality": 0-10, "feasibility": 0-10, "why_only_you": string}], '
+            '"left_field": string, "do_not_fake": [string]}.'
+        ),
+    },
     "Davy": {
         "role": "Capture Strategist",
         "system": (
             "You are Davy, a capture strategist. Given the topic, the applicant's resume, and the notes "
-            "from Canari (fit), Vien (technical), Anthracite (business), Collier (teaming), and Hewer "
-            "(lift/adaptation), synthesize an actionable capture plan: the win themes and discriminators "
-            "to emphasize, key questions to ask the TPOC, and immediate next actions if pursuing.\n"
+            "from Canari (fit), Vien (technical), Anthracite (business), Collier (teaming), Hewer "
+            "(lift/adaptation), and Flint (creative tool reuse), synthesize an actionable capture plan: "
+            "the win themes and discriminators to emphasize, key questions to ask the TPOC, and "
+            "immediate next actions if pursuing. Steal Flint's best spark as a discriminator when it is "
+            "defensible.\n"
             "Return ONLY JSON with keys: "
             '{"win_themes": [string], "discriminators": [string], '
             '"questions_for_tpoc": [string], "next_actions": [string], '
@@ -103,9 +135,11 @@ AGENTS: dict[str, dict[str, str]] = {
 }
 
 COUNCIL_SYSTEM = (
-    "You are the SBIR Scout Council chair. You are given a DoD SBIR/STTR topic, the applicant's "
-    "capabilities, and structured assessments from Canari (fit), Vien (technical), Anthracite "
-    "(business), and Davy (capture). Produce the final recommendation.\n"
+    "You are the SCOUT Council chair. You are given a DoD SBIR/STTR topic, the applicant's "
+    "ME resume + company capabilities, and structured assessments from Canari (fit), Vien "
+    "(technical), Anthracite (business), Hewer (lift), Flint (creative tool reuse), and Davy "
+    "(capture). Produce the final recommendation. Credit a Flint spark when it is a real "
+    "discriminator.\n"
     "Return ONLY JSON with keys: "
     '{"fit_score": 0-100, "recommendation": "GO|LEAN GO|LEAN NO-GO|NO-GO", '
     '"rationale": string, "top_strengths": [string], "top_risks": [string], '
@@ -171,10 +205,10 @@ def summarize_topic(topic: dict[str, Any]) -> str:
 
 
 def _agent_prompt(topic_text: str, resume_text: str, extra: str = "") -> str:
-    resume_block = resume_text.strip() or "(No resume provided.)"
+    resume_block = resume_text.strip() or "(No resume provided. Ask them to upload ME.)"
     return (
-        "APPLICANT CAPABILITIES / RESUME:\n"
-        f"{resume_block[:6000]}\n\n"
+        "APPLICANT PROFILE (prefer the ME section for personal tools; COMPANY is the product line):\n"
+        f"{resume_block[:8000]}\n\n"
         "DoD SBIR/STTR TOPIC:\n"
         f"{topic_text}\n"
         f"{extra}\n\n"
@@ -186,10 +220,14 @@ def _agent_prompt(topic_text: str, resume_text: str, extra: str = "") -> str:
 
 async def run_single_agent(name: str, topic_text: str, resume_text: str, extra: str = "") -> dict[str, Any]:
     spec = AGENTS[name]
+    try:
+        temperature = float(spec.get("temperature") or 0.3)
+    except (TypeError, ValueError):
+        temperature = 0.3
     out = await ollama_client.chat(
         spec["system"],
         _agent_prompt(topic_text, resume_text, extra),
-        temperature=0.3,
+        temperature=temperature,
         format_json=True,
     )
     result = _safe_json(out)
@@ -210,20 +248,25 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     anthracite = await run_single_agent("Anthracite", topic_text, resume_text)
     collier = await run_single_agent("Collier", topic_text, resume_text)
 
-    # Hewer benefits from the technical read when scoring the lift.
     hewer_notes = (
         "\n\nTECHNICAL NOTES (from Vien):\n" + json.dumps(vien)[:2000]
     )
     hewer = await run_single_agent("Hewer", topic_text, resume_text, extra=hewer_notes)
 
-    # Davy synthesizes with the others' notes.
+    flint_notes = (
+        "\n\nTECHNICAL NOTES (from Vien):\n" + json.dumps(vien)[:1500]
+        + "\n\nLIFT NOTES (from Hewer):\n" + json.dumps(hewer)[:1500]
+    )
+    flint = await run_single_agent("Flint", topic_text, resume_text, extra=flint_notes)
+
     peer_notes = (
         "\n\nPEER ASSESSMENTS:\n"
-        f"Canari (fit): {json.dumps(canari)[:2000]}\n"
-        f"Vien (technical): {json.dumps(vien)[:2000]}\n"
-        f"Anthracite (business): {json.dumps(anthracite)[:2000]}\n"
-        f"Collier (teaming): {json.dumps(collier)[:2000]}\n"
-        f"Hewer (lift): {json.dumps(hewer)[:2000]}\n"
+        f"Canari (fit): {json.dumps(canari)[:1800]}\n"
+        f"Vien (technical): {json.dumps(vien)[:1800]}\n"
+        f"Anthracite (business): {json.dumps(anthracite)[:1800]}\n"
+        f"Collier (teaming): {json.dumps(collier)[:1500]}\n"
+        f"Hewer (lift): {json.dumps(hewer)[:1500]}\n"
+        f"Flint (creative tools): {json.dumps(flint)[:2000]}\n"
     )
     davy = await run_single_agent("Davy", topic_text, resume_text, extra=peer_notes)
 
@@ -233,6 +276,7 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
         "Anthracite": anthracite,
         "Collier": collier,
         "Hewer": hewer,
+        "Flint": flint,
         "Davy": davy,
     }
 

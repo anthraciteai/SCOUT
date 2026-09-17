@@ -107,7 +107,7 @@ export default function Tracker() {
 
   return (
     <div>
-      <h1>Tracker</h1>
+      <h1>Pipeline</h1>
       <p className="subtitle">
         Your bid pipeline. Move topics through stages and record outcomes. Lost bids can be improved
         by uploading the debrief in the <Link to="/debriefs">Debriefs</Link> tab.
@@ -115,7 +115,8 @@ export default function Tracker() {
 
       {rows.length === 0 && (
         <div className="empty">
-          Nothing tracked yet. Add topics from <Link to="/">Browse</Link>.
+          Nothing tracked yet. Add topics from <Link to="/">Inbox</Link> or{" "}
+          <Link to="/browse">Browse</Link>.
         </div>
       )}
 

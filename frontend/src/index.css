@@ -37,9 +37,8 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
 }
 
-.brand { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-.brand span { color: var(--accent); }
-.tagline { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+.brand { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: var(--accent); }
+.tagline { color: var(--muted); font-size: 12px; margin-bottom: 20px; line-height: 1.4; }
 
 .nav a {
   display: flex;
@@ -132,6 +131,21 @@ th { color: var(--muted); font-weight: 600; }
   font-size: 28px;
   font-weight: 800;
 }
+.score.green { color: var(--green); }
+.score.yellow { color: var(--yellow); }
+.score.muted { color: var(--muted); }
+.match-bar {
+  height: 6px;
+  background: var(--panel-2);
+  border-radius: 3px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+.match-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
 .agent-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 @media (max-width: 800px) { .agent-grid { grid-template-columns: 1fr; } .content { padding: 16px; } }
 
@@ -190,9 +204,17 @@ ul.tight li { margin: 3px 0; font-size: 13px; }
 .toast.success { border-left-color: var(--green); }
 .toast.error { border-left-color: var(--red); }
 .toast.info { border-left-color: var(--accent); }
-@keyframes toastIn {
-  from { transform: translateX(24px); opacity: 0; }
-  to { transform: none; opacity: 1; }
+.whoami {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+code {
+  font-size: 12px;
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 
 /* Rich HTML content (DSIP questions/objectives) */

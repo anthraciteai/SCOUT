@@ -136,10 +136,10 @@ export default function Browse() {
 
   return (
     <div>
-      <h1>Browse Topics</h1>
+      <h1>Browse</h1>
       <p className="subtitle">
-        Search open &amp; pre-release DoD SBIR/STTR topics. Select topics, then run the agent
-        council on the Analysis tab.
+        Catalog search if you already know what to look for. The Inbox ranks open topics against
+        your profile without this step.
       </p>
 
       <form className="card" onSubmit={submit}>
@@ -232,7 +232,7 @@ export default function Browse() {
           <span>
             <strong>{ids.length}</strong> topic{ids.length > 1 ? "s" : ""} selected
           </span>
-          <button onClick={() => navigate("/analysis")}>Run Analysis →</button>
+          <button onClick={() => navigate("/analysis")}>Run council →</button>
         </div>
       )}
     </div>

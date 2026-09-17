@@ -1,0 +1,8 @@
+# NVIDIA GPU passthrough for Ollama.
+# Requires nvidia-container-toolkit (this repo's default compose is CPU).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+services:
+  ollama:
+    gpus: all

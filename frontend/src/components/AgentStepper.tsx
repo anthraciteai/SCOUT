@@ -4,8 +4,9 @@ import type { AgentResult, HewerResult, Topic, TeamRecommendation } from "../typ
 import { topicMeta } from "../pages/Browse";
 import HewerCard, { liftColor } from "./HewerCard";
 import TeamCard from "./TeamCard";
+import FlintCard, { type FlintResult } from "./FlintCard";
 
-const ORDER = ["Canari", "Vien", "Anthracite", "Collier", "Hewer", "Davy"];
+const ORDER = ["Canari", "Vien", "Anthracite", "Collier", "Hewer", "Flint", "Davy"];
 
 const ROLES: Record<string, string> = {
   Canari: "Fit / early warning",
@@ -13,6 +14,7 @@ const ROLES: Record<string, string> = {
   Anthracite: "Business development",
   Collier: "Who to add (teaming)",
   Hewer: "Heavy lift + adaptation",
+  Flint: "Creative — your tools, unexpected uses",
   Davy: "Capture strategy",
 };
 
@@ -22,6 +24,7 @@ const COLORS: Record<string, string> = {
   Anthracite: "#9aa4b2",
   Collier: "#c98b3a",
   Hewer: "#e0704f",
+  Flint: "#e6c07b",
   Davy: "#3fb950",
 };
 
@@ -52,6 +55,7 @@ function GenericResult({ data }: { data: AgentResult }) {
 function renderAgent(name: string, data: AgentResult) {
   if (name === "Hewer") return <HewerCard rec={data as HewerResult} />;
   if (name === "Collier") return <TeamCard rec={data as TeamRecommendation} />;
+  if (name === "Flint") return <FlintCard rec={data as FlintResult} />;
   return <GenericResult data={data} />;
 }
 
@@ -72,7 +76,7 @@ export default function AgentStepper({ topic }: { topic: Topic }) {
       // Give later agents (Hewer, Davy) the peer notes gathered so far.
       const context =
         Object.keys(prior).length > 0 ? JSON.stringify(prior).slice(0, 6000) : undefined;
-      const resp = await AnalysisApi.runAgent(topicId, name, meta, context);
+      const resp = await AnalysisApi.runAgent(topicId, name, meta, context, Boolean(prior[name]));
       const next = { ...prior, [name]: resp.result };
       setResults(next);
       return next;
@@ -101,6 +105,7 @@ export default function AgentStepper({ topic }: { topic: Topic }) {
           <h3 style={{ margin: 0 }}>Run through each agent</h3>
           <div className="meta">
             Step through the council one voice at a time, or run them all in order.
+            Flint only sparks from tools on the resume marked ME.
           </div>
         </div>
         <button className="ghost" onClick={runAll} disabled={runningAll || busy != null}>
@@ -126,7 +131,12 @@ export default function AgentStepper({ topic }: { topic: Topic }) {
               style={{
                 marginBottom: 8,
                 background: "var(--panel-2)",
-                borderColor: name === "Hewer" && lift != null ? liftColor(lift) : "var(--border)",
+                borderColor:
+                  name === "Flint"
+                    ? "#e6c07b"
+                    : name === "Hewer" && lift != null
+                      ? liftColor(lift)
+                      : "var(--border)",
               }}
             >
               <div className="row spread">

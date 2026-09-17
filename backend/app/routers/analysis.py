@@ -8,8 +8,10 @@ from sqlmodel import Session, select
 
 from .. import agents, dsip
 from ..db import get_session
+from ..identity import current_identity
 from ..models import AnalysisRun
 from ..resume_service import get_resume_text
+from ..vault import get_vault
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
@@ -17,6 +19,7 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 class RunRequest(BaseModel):
     topic_ids: list[str]
     resume_id: Optional[int] = None
+    force: bool = False
     # Optional summary metadata keyed by topic_id: {topic_code, title, component,
     # program, topic_status, solicitation_title}. The details endpoint lacks these.
     topics_meta: Optional[dict[str, dict]] = None
@@ -62,6 +65,26 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
 
         topic = _merge_meta(topic, (req.topics_meta or {}).get(topic_id))
 
+        ident = current_identity()
+        vault = get_vault()
+        if ident:
+            vault.grant_sbir(
+                ident,
+                topic_id,
+                {
+                    "topic_id": topic_id,
+                    "title": topic.get("topicTitle") or topic.get("title"),
+                    "topic_code": topic.get("topicCode") or topic.get("finalTopicCode"),
+                },
+            )
+            if not req.force:
+                cached = vault.cache_get(vault.user_path(topic_id, ident, "council.json"))
+                if not cached:
+                    cached = vault.cache_get(vault.shared_path(topic_id, ident, "council.json"))
+                if cached and cached.get("result"):
+                    runs.append(_from_cache(topic_id, topic, cached))
+                    continue
+
         result = await agents.analyze_topic(topic, resume_text)
         score, rec = agents.extract_score_and_rec(result.get("council", {}))
         heavy_lift = agents.extract_heavy_lift(result.get("agents", {}))
@@ -80,9 +103,46 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
         session.add(run)
         session.commit()
         session.refresh(run)
-        runs.append(_serialize(run))
+        payload = _serialize(run)
+        if ident:
+            body = vault.cache_put(
+                vault.user_path(topic_id, ident, "council.json"),
+                {"result": result, "fit_score": score, "recommendation": rec, "heavy_lift": heavy_lift},
+                result.get("model", ""),
+                "council",
+            )
+            # First org council also becomes the federated copy if none exists yet.
+            if not vault.exists(vault.shared_path(topic_id, ident, "council.json")):
+                vault.cache_put(
+                    vault.shared_path(topic_id, ident, "council.json"),
+                    {"result": result, "fit_score": score, "recommendation": rec, "heavy_lift": heavy_lift, "author": ident.user_id},
+                    result.get("model", ""),
+                    "council",
+                )
+            payload["cached_at"] = body.get("cached_at")
+            payload["cached"] = False
+        runs.append(payload)
 
     return {"runs": runs}
+
+
+def _from_cache(topic_id: str, topic: dict, cached: dict) -> dict:
+    result = cached.get("result") or {}
+    council = result.get("council") or {}
+    return {
+        "id": 0,
+        "topic_id": topic_id,
+        "topic_code": topic.get("topicCode") or topic.get("finalTopicCode") or cached.get("topic_code"),
+        "title": topic.get("topicTitle") or topic.get("title"),
+        "model": cached.get("model") or result.get("model") or "",
+        "fit_score": cached.get("fit_score") or council.get("fit_score"),
+        "heavy_lift": cached.get("heavy_lift"),
+        "recommendation": cached.get("recommendation") or council.get("recommendation"),
+        "created_at": cached.get("cached_at") or "",
+        "cached": True,
+        "cached_at": cached.get("cached_at"),
+        "result": result,
+    }
 
 
 def _serialize(run: AnalysisRun) -> dict:
@@ -96,6 +156,7 @@ def _serialize(run: AnalysisRun) -> dict:
         "heavy_lift": run.heavy_lift,
         "recommendation": run.recommendation,
         "created_at": run.created_at.isoformat(),
+        "cached": False,
         "result": json.loads(run.result_json or "{}"),
     }
 
@@ -104,6 +165,7 @@ class AgentRequest(BaseModel):
     topic_id: str
     agent: str
     resume_id: Optional[int] = None
+    force: bool = False
     topics_meta: Optional[dict[str, dict]] = None
     # JSON of already-run agents, used as peer context (e.g. for Davy/Hewer).
     context: Optional[str] = None
@@ -126,11 +188,42 @@ async def run_agent(req: AgentRequest, session: Session = Depends(get_session)):
         topic = {**topic, **topic["topic"]}
     topic = _merge_meta(topic, (req.topics_meta or {}).get(req.topic_id))
 
+    ident = current_identity()
+    vault = get_vault()
+    cache_name = "flint.json" if req.agent == "Flint" else f"{req.agent.lower()}.json"
+    if ident:
+        vault.grant_sbir(
+            ident,
+            req.topic_id,
+            {
+                "topic_id": req.topic_id,
+                "title": topic.get("topicTitle") or topic.get("title"),
+                "topic_code": topic.get("topicCode") or topic.get("finalTopicCode"),
+            },
+        )
+        if not req.force:
+            cached = vault.cache_get(vault.user_path(req.topic_id, ident, cache_name))
+            if cached and cached.get("result"):
+                return {
+                    "agent": req.agent,
+                    "result": cached["result"],
+                    "model": cached.get("model") or "",
+                    "cached": True,
+                    "cached_at": cached.get("cached_at"),
+                }
+
     topic_text = agents.summarize_topic(topic)
     extra = f"\n\nPEER ASSESSMENTS:\n{req.context}" if req.context else ""
     result = await agents.run_single_agent(req.agent, topic_text, resume_text, extra=extra)
     model = await agents.ollama_client.resolve_model()
-    return {"agent": req.agent, "result": result, "model": model}
+    if ident:
+        vault.cache_put(
+            vault.user_path(req.topic_id, ident, cache_name),
+            {"result": result},
+            model,
+            req.agent.lower(),
+        )
+    return {"agent": req.agent, "result": result, "model": model, "cached": False}
 
 
 @router.get("/agents")
@@ -160,6 +253,20 @@ def list_runs(session: Session = Depends(get_session)):
 
 @router.get("/topic/{topic_id}")
 def latest_for_topic(topic_id: str, session: Session = Depends(get_session)):
+    ident = current_identity()
+    if ident:
+        vault = get_vault()
+        cached = vault.cache_get(vault.user_path(topic_id, ident, "council.json"))
+        if not cached:
+            cached = vault.cache_get(vault.shared_path(topic_id, ident, "council.json"))
+        if cached and cached.get("result"):
+            meta = vault.read_json(vault.shared_path(topic_id, ident, "topic.json")) or {}
+            topic = {
+                "topicId": topic_id,
+                "topicCode": meta.get("topic_code") or meta.get("topicCode"),
+                "topicTitle": meta.get("title") or meta.get("topicTitle"),
+            }
+            return _from_cache(topic_id, topic, cached)
     run = session.exec(
         select(AnalysisRun)
         .where(AnalysisRun.topic_id == topic_id)

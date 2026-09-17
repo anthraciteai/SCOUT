@@ -6,11 +6,16 @@ import type {
   Debrief,
   OllamaStatus,
   Proposal,
+  MatchInbox,
   ResumeInfo,
   SearchResponse,
   TeamResponse,
   Topic,
   TrackedTopic,
+  AuthStatus,
+  OrgCompany,
+  ScoutUser,
+  SbirWorkspace,
 } from "../types";
 
 // ---- Topics (DSIP proxy) ----
@@ -50,9 +55,14 @@ export interface TopicMeta {
 }
 
 export const AnalysisApi = {
-  run: (topic_ids: string[], topics_meta?: Record<string, TopicMeta>, resume_id?: number) =>
+  run: (
+    topic_ids: string[],
+    topics_meta?: Record<string, TopicMeta>,
+    resume_id?: number,
+    force = false
+  ) =>
     api
-      .post<{ runs: AnalysisRun[] }>("/analysis/run", { topic_ids, resume_id, topics_meta })
+      .post<{ runs: AnalysisRun[] }>("/analysis/run", { topic_ids, resume_id, topics_meta, force })
       .then((r) => r.data.runs),
   list: () => api.get<AnalysisRun[]>("/analysis").then((r) => r.data),
   get: (id: number) => api.get<AnalysisRun>(`/analysis/${id}`).then((r) => r.data),
@@ -63,10 +73,11 @@ export const AnalysisApi = {
     topic_id: string,
     agent: string,
     topics_meta?: Record<string, TopicMeta>,
-    context?: string
+    context?: string,
+    force = false
   ) =>
     api
-      .post<AgentRunResponse>("/analysis/agent", { topic_id, agent, topics_meta, context })
+      .post<AgentRunResponse>("/analysis/agent", { topic_id, agent, topics_meta, context, force })
       .then((r) => r.data),
 };
 
@@ -122,12 +133,18 @@ export const DebriefsApi = {
 export const ResumeApi = {
   list: () => api.get<ResumeInfo[]>("/resume").then((r) => r.data),
   active: () => api.get<ResumeInfo | null>("/resume/active").then((r) => r.data),
-  fromText: (name: string, text: string) =>
-    api.post<ResumeInfo>("/resume/text", { name, text }).then((r) => r.data),
-  upload: (file: File, name?: string) => {
+  me: () => api.get<ResumeInfo | null>("/resume/me").then((r) => r.data),
+  extract: (resume_id?: number, force = true) =>
+    api
+      .post<ResumeInfo>("/resume/extract", null, { params: { resume_id, force } })
+      .then((r) => r.data),
+  fromText: (name: string, text: string, kind: "me" | "company" = "company") =>
+    api.post<ResumeInfo>("/resume/text", { name, text, kind }).then((r) => r.data),
+  upload: (file: File, name?: string, kind: "me" | "company" = "company") => {
     const fd = new FormData();
     fd.append("file", file);
     if (name) fd.append("name", name);
+    fd.append("kind", kind);
     return api
       .post<ResumeInfo>("/resume/upload", fd, { headers: { "Content-Type": "multipart/form-data" } })
       .then((r) => r.data);
@@ -137,12 +154,48 @@ export const ResumeApi = {
   remove: (id: number) => api.delete(`/resume/${id}`).then((r) => r.data),
 };
 
+// ---- Matches (inbox ranker) ----
+export const MatchesApi = {
+  list: (resume_id?: number) =>
+    api.get<MatchInbox>("/matches", { params: { resume_id } }).then((r) => r.data),
+  scan: (opts?: { resume_id?: number; force_extract?: boolean }) =>
+    api
+      .post<MatchInbox>("/matches/scan", null, { params: opts || {} })
+      .then((r) => r.data),
+};
+
 // ---- System ----
 export const SystemApi = {
   ollama: () => api.get<OllamaStatus>("/system/ollama").then((r) => r.data),
   pull: (name?: string) =>
     api.post("/system/ollama/pull", null, { params: name ? { name } : {} }).then((r) => r.data),
   agents: () => api.get<AgentMeta[]>("/system/agents").then((r) => r.data),
+};
+
+export const AuthApi = {
+  status: () => api.get<AuthStatus>("/auth/status").then((r) => r.data),
+  login: (username: string, password = "", company_id?: string) =>
+    api
+      .post<{ token: string; user: ScoutUser }>("/auth/login", { username, password, company_id })
+      .then((r) => r.data),
+  me: () => api.get<ScoutUser>("/auth/me").then((r) => r.data),
+};
+
+export const OrgApi = {
+  company: () => api.get<OrgCompany>("/org/company").then((r) => r.data),
+  saveMission: (text: string) => api.put("/org/company/mission", { text }).then((r) => r.data),
+  saveProducts: (text: string) => api.put("/org/company/products", { text }).then((r) => r.data),
+  saveMe: (body: { me?: string; skills?: string[]; display_name?: string }) =>
+    api.put("/org/me", body).then((r) => r.data),
+  sbirs: () => api.get<{ sbirs: SbirWorkspace[] }>("/org/sbir").then((r) => r.data.sbirs),
+  workspace: (topic_id: string) =>
+    api.get<SbirWorkspace>(`/org/sbir/${topic_id}`).then((r) => r.data),
+  grant: (topic_id: string, meta?: Record<string, string>) =>
+    api.post<SbirWorkspace>(`/org/sbir/${topic_id}/grant`, meta || { topic_id }).then((r) => r.data),
+  saveShared: (topic_id: string, name: "proposal.md" | "notes.md", text: string) =>
+    api.put(`/org/sbir/${topic_id}/shared/${name}`, { text }).then((r) => r.data),
+  saveMine: (topic_id: string, name: "draft.md" | "notes.md", text: string) =>
+    api.put(`/org/sbir/${topic_id}/mine/${name}`, { text }).then((r) => r.data),
 };
 
 // ---- Streaming helper (for live proposal feedback) ----

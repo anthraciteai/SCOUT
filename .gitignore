@@ -29,6 +29,7 @@ backend/data/
 Thumbs.db
 .idea/
 .vscode/
+.cursor/
 
 # backend test fixtures
 backend/*_req.json

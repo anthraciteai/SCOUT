@@ -33,6 +33,12 @@ def _auto_migrate() -> None:
                 conn.execute(
                     text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col.name}" {coltype}')
                 )
+    # Pre-kind rows should stay company so Flint does not treat a product pack as ME.
+    if insp.has_table("resume"):
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE resume SET kind = 'company' WHERE kind IS NULL OR kind = ''")
+            )
 
 
 def init_db() -> None:

@@ -1,32 +1,41 @@
+# MINIMAL local proof stack: frontend + backend, stub Ken/Jake/Matt,
+# disk vault, host snap Ollama. No Keycloak, no SeaweedFS, no extra Ollama.
+#
+#   docker compose up --build
+#
+# Production-shaped (Keycloak + SeaweedFS):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# GPU Ollama in-compose (only if you really want it; default uses the host snap):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+
 services:
+  # Optional in-compose Ollama (not used by default — host snap owns :11434).
+  #   docker compose --profile embedded up --build
   ollama:
+    profiles: ["embedded"]
     image: ollama/ollama:latest
-    container_name: sbir-ollama
+    container_name: scout-ollama
     ports:
-      - "11434:11434"
+      - "11436:11434"
     volumes:
       - ollama_models:/root/.ollama
     restart: unless-stopped
-    # NVIDIA GPU passthrough (needs Docker Desktop + NVIDIA driver on Windows/WSL2,
-    # or nvidia-container-toolkit on Linux). Remove this line on machines w/o an
-    # NVIDIA GPU (Ollama will then run on CPU).
-    gpus: all
 
   backend:
     build:
       context: ./backend
-    container_name: sbir-backend
+    container_name: scout-backend
     env_file:
       - .env
+    # Snap Ollama listens on 127.0.0.1:11434 only. Host networking is how
+    # the backend reaches it without publishing a second Ollama on :11434.
+    network_mode: host
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - OLLAMA_BASE_URL=http://127.0.0.1:11434
     volumes:
       - app_data:/data
       - ./backend/app:/app/app
-    depends_on:
-      - ollama
     restart: unless-stopped
 
   frontend:
@@ -34,7 +43,9 @@ services:
       context: ./frontend
       args:
         - VITE_API_BASE=/api
-    container_name: sbir-frontend
+    container_name: scout-frontend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${FRONTEND_PORT:-8080}:80"
     depends_on:

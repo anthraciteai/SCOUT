@@ -1,0 +1,94 @@
+{
+  "realm": "scout",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginTheme": "keycloak",
+  "accessTokenLifespan": 1800,
+  "groups": [
+    { "name": "anthracite" },
+    { "name": "capture" }
+  ],
+  "clients": [
+    {
+      "clientId": "scout-frontend",
+      "name": "SCOUT Frontend (SPA)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8080",
+        "http://localhost:5173",
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        },
+        {
+          "name": "audience-scout-frontend",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "scout-frontend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "ken",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "ken@anthracite.local",
+      "firstName": "Ken",
+      "lastName": "Health",
+      "credentials": [{ "type": "password", "value": "ken", "temporary": false }],
+      "groups": ["/anthracite", "/capture"]
+    },
+    {
+      "username": "jake",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "jake@anthracite.local",
+      "firstName": "Jake",
+      "lastName": "C2",
+      "credentials": [{ "type": "password", "value": "jake", "temporary": false }],
+      "groups": ["/anthracite", "/capture"]
+    },
+    {
+      "username": "matt",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "matt@anthracite.local",
+      "firstName": "Matt",
+      "lastName": "Capture",
+      "credentials": [{ "type": "password", "value": "matt", "temporary": false }],
+      "groups": ["/anthracite", "/capture"]
+    }
+  ]
+}

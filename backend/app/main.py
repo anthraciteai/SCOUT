@@ -5,9 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import init_db
+from .identity import bind_identity_middleware
+from .org_seed import seed_org
 from .routers import (
     analysis,
+    auth,
     debriefs,
+    matches,
+    org,
     proposals,
     resume,
     system,
@@ -15,15 +20,19 @@ from .routers import (
     topics,
     tracker,
 )
+from .vault import get_vault
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    seed_org(get_vault())
     yield
 
 
-app = FastAPI(title="SBIR Scout API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="SCOUT API", version="1.0.0", lifespan=lifespan)
+
+app.middleware("http")(bind_identity_middleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,7 +44,10 @@ app.add_middleware(
 )
 
 app.include_router(system.router)
+app.include_router(auth.router)
+app.include_router(org.router)
 app.include_router(topics.router)
+app.include_router(matches.router)
 app.include_router(analysis.router)
 app.include_router(team.router)
 app.include_router(tracker.router)
@@ -46,4 +58,4 @@ app.include_router(resume.router)
 
 @app.get("/")
 def root():
-    return {"name": "SBIR Scout API", "docs": "/docs"}
+    return {"name": "SCOUT API", "docs": "/docs"}
