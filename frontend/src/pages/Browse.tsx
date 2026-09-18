@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { TopicsApi, TrackerApi } from "../api";
+import { MatchesApi, TopicsApi, TrackerApi } from "../api";
 import type { TopicScope } from "../api";
-import type { Topic } from "../types";
+import type { MatchInbox, MatchItem, Topic } from "../types";
 import { useSelection } from "../selection";
 import { useToast } from "../toast";
+import { confirmRerank, matchBadge, scoreClass } from "../matchRank";
 
 const PAGE_SIZE = 10;
 
@@ -78,6 +79,8 @@ export default function Browse() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [inbox, setInbox] = useState<MatchInbox | null>(null);
+  const [ranking, setRanking] = useState(false);
 
   const { toggle, isSelected, ids } = useSelection();
   const navigate = useNavigate();
@@ -104,6 +107,7 @@ export default function Browse() {
   }
 
   useEffect(() => {
+    MatchesApi.list().then(setInbox).catch(() => {});
     load(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -119,6 +123,20 @@ export default function Browse() {
     load(p);
   }
 
+  async function rerank() {
+    if (!confirmRerank()) return;
+    setRanking(true);
+    try {
+      const data = await MatchesApi.scan({ force_extract: true });
+      setInbox(data);
+      toast(`Cached ${data.matches.length} ranked topic${data.matches.length === 1 ? "" : "s"}`);
+    } catch (e: any) {
+      toast(e?.response?.data?.detail || e.message || "Re-rank failed", "error");
+    } finally {
+      setRanking(false);
+    }
+  }
+
   async function track(t: Topic) {
     await TrackerApi.track({
       topic_id: t.topicId,
@@ -129,19 +147,120 @@ export default function Browse() {
       topic_status: t.topicStatus,
       raw: t,
     });
-    toast(`Added ${topicCode(t)} to tracker`);
+    toast(`Added ${topicCode(t)} to pipeline — Group desk is for that bid`);
   }
 
   const pages = Math.ceil(total / PAGE_SIZE);
+  const byId = new Map((inbox?.matches || []).map((m) => [m.topic_id, m]));
+  const best = (inbox?.matches || []).filter((m) => m.score > 0).slice(0, 12);
+  const stale =
+    Boolean(inbox?.resume?.updated_at && inbox?.scanned_at) &&
+    new Date(inbox!.resume!.updated_at as string).getTime() >
+      new Date(inbox!.scanned_at as string).getTime();
+
+  function MatchSide({ m }: { m?: MatchItem }) {
+    if (!m) return null;
+    const badge = matchBadge(m.score);
+    return (
+      <div style={{ textAlign: "right", minWidth: 96 }}>
+        {badge && (
+          <span className={`pill ${badge.cls}`} style={{ marginBottom: 6 }}>
+            {badge.text}
+          </span>
+        )}
+        <div className={`score ${scoreClass(m.score)}`} style={{ fontSize: 20 }}>
+          {Math.round(m.score)}
+          <span style={{ fontSize: 12, color: "var(--muted)" }}> match</span>
+        </div>
+        <div className="match-bar">
+          <span style={{ width: `${Math.min(100, m.score)}%` }} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       <h1>Browse</h1>
       <p className="subtitle">
-        Catalog search if you already know what to look for. The Inbox ranks open topics against
-        your profile without this step.
+        Strong matches come from the last ranking of your resume — they stay cached until you
+        re-rank. Catalog search is still here if you already know a keyword.
       </p>
 
+      <div className="card">
+        <div className="row spread">
+          <div>
+            <div className="meta">
+              {inbox?.scanned_at
+                ? `Cached ${inbox.match_count} topics · ranked ${new Date(inbox.scanned_at).toLocaleString()}`
+                : "No cached ranking yet."}
+              {stale && (
+                <span style={{ color: "var(--yellow)", marginLeft: 8 }}>
+                  Resume changed since this cache.
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={rerank} disabled={ranking}>
+            {ranking ? "Re-ranking…" : "Re-rank from resume"}
+          </button>
+        </div>
+        <p className="meta" style={{ margin: "8px 0 0" }}>
+          Re-rank walks every open SBIR against ME / the company pack. It can take several
+          minutes. Browse itself only reads the cache.
+        </p>
+      </div>
+
+      {best.length > 0 && (
+        <>
+          <h2>Strong matches</h2>
+          <p className="meta" style={{ marginTop: 0 }}>
+            Highest overlap from the cached scan. Not a new LLM run.
+          </p>
+          {best.map((m) => {
+            const t = m.topic;
+            return (
+              <div className="card" key={`best-${m.topic_id}`}>
+                <div className="row spread">
+                  <div className="grow">
+                    <div className="row">
+                      {t && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected(m.topic_id)}
+                          onChange={() => toggle(t)}
+                          style={{ width: 16, height: 16 }}
+                        />
+                      )}
+                      <Link to={`/topic/${m.topic_id}`} state={{ topic: t }} className="topic-title">
+                        {m.topic_code} — {m.title}
+                      </Link>
+                    </div>
+                    <div className="meta" style={{ marginTop: 4 }}>
+                      {m.component} · {m.program}
+                    </div>
+                    {t && (
+                      <div style={{ marginTop: 6 }}>
+                        <TopicDates t={t} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="row">
+                    <MatchSide m={m} />
+                    {t && (
+                      <button className="ghost small" onClick={() => track(t)}>
+                        Track
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      <h2>Catalog</h2>
       <form className="card" onSubmit={submit}>
         <div className="row">
           <input
@@ -216,6 +335,7 @@ export default function Browse() {
               </div>
             </div>
             <div className="row">
+              <MatchSide m={byId.get(t.topicId)} />
               <span className={`pill ${statusClass(t.topicStatus)}`}>{t.topicStatus}</span>
               <button className="ghost small" onClick={() => track(t)}>
                 Track

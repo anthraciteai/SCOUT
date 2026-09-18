@@ -32,7 +32,8 @@ export default function Org() {
       <h1>{co.company_id}</h1>
       <p className="subtitle">
         Signed in as <strong>{user?.display_name || user?.user_id}</strong>. Company mission and
-        products are federated. Personal drafts stay under your user folder.
+        Personal drafts stay under your user folder. Approach overlap on a topic is
+        flagged on the group desk without sharing private prose.
       </p>
 
       <div className="card">
@@ -69,7 +70,7 @@ export default function Org() {
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>People in {co.company_id}</h2>
-        <p className="meta">From companies/{co.company_id}/employees.txt — complementary stacks for a bid.</p>
+        <p className="meta">From companies/{co.company_id}/employees/&lt;you&gt; — complementary stacks for a bid.</p>
         <table>
           <thead>
             <tr>
@@ -105,6 +106,7 @@ export default function Org() {
         <h2 style={{ marginTop: 0 }}>Federated SBIRs</h2>
         <p className="meta">
           Union of your sbir.txt and group capture/sbir.txt. Cached council/Flint skip the LLM.
+          Shared writing is on Group desk, and only for SBIRs in the pipeline.
         </p>
         {sbirs.length === 0 && <div className="empty">None yet — Flint or Council a topic from Inbox.</div>}
         {sbirs.map((s) => (
@@ -118,7 +120,13 @@ export default function Org() {
             <div className="row">
               {s.cached_council && <span className="pill green">council cached</span>}
               {s.cached_flint && <span className="pill yellow">flint cached</span>}
+              {(s.chat_turns || 0) > 0 && <span className="pill">{s.chat_turns} chat turns</span>}
               {s.has_shared_proposal && <span className="pill">shared draft</span>}
+              {(s.overlap_count || 0) > 0 && (
+                <span className="pill yellow">
+                  {s.overlap_count} overlap{s.overlap_count === 1 ? "" : "s"}
+                </span>
+              )}
             </div>
           </div>
         ))}

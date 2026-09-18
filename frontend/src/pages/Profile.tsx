@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ResumeApi } from "../api";
+import { ResumeApi, MatchesApi } from "../api";
 import type { ResumeInfo } from "../types";
 import { useToast } from "../toast";
+import { confirmRerank } from "../matchRank";
 
 export default function Profile() {
   const [resumes, setResumes] = useState<ResumeInfo[]>([]);
@@ -11,6 +12,7 @@ export default function Profile() {
   const [name, setName] = useState("ME");
   const [busy, setBusy] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [ranking, setRanking] = useState(false);
   const meFile = useRef<HTMLInputElement>(null);
   const companyFile = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -41,7 +43,7 @@ export default function Profile() {
     try {
       await ResumeApi.fromText(name || "ME", text, "me");
       await loadAll();
-      toast("Saved as ME — Flint will use this toolbox");
+      toast("Saved as ME — rankings stay cached until you re-rank");
     } finally {
       setBusy(false);
     }
@@ -56,7 +58,7 @@ export default function Profile() {
       setText(r.text || "");
       if (meFile.current) meFile.current.value = "";
       await loadAll();
-      toast("This is you. Flint will only spark from tools on that resume.");
+      toast("This is you. Re-rank from Browse or the button below when you want new scores.");
     } finally {
       setBusy(false);
     }
@@ -89,6 +91,19 @@ export default function Profile() {
     if (!confirm("Delete this profile?")) return;
     await ResumeApi.remove(id);
     await loadAll();
+  }
+
+  async function rerank() {
+    if (!confirmRerank()) return;
+    setRanking(true);
+    try {
+      const data = await MatchesApi.scan({ force_extract: true });
+      toast(`Cached ${data.matches.length} ranked topics`);
+    } catch (e: any) {
+      toast(e?.response?.data?.detail || e.message || "Re-rank failed", "error");
+    } finally {
+      setRanking(false);
+    }
   }
 
   async function extract() {
@@ -135,11 +150,18 @@ export default function Profile() {
           onChange={(e) => setText(e.target.value)}
           placeholder="Paste your resume. Flint reads this as you — Docker, PX4, TAK, Python, Jetson, whatever is actually on the page."
         />
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10 }} className="row">
           <button onClick={saveMe} disabled={busy || !text.trim()}>
             Save as ME
           </button>
+          <button className="ghost" onClick={rerank} disabled={ranking || busy}>
+            {ranking ? "Re-ranking…" : "Re-rank open topics"}
+          </button>
         </div>
+        <p className="meta" style={{ margin: "8px 0 0" }}>
+          Saving does not re-score SBIRs. Re-rank walks every open topic against this resume and
+          can take several minutes. Browse then reads that cache.
+        </p>
       </div>
 
       <div className="card">

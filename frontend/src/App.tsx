@@ -6,6 +6,7 @@ import Browse from "./pages/Browse";
 import TopicDetail from "./pages/TopicDetail";
 import Analysis from "./pages/Analysis";
 import Tracker from "./pages/Tracker";
+import GroupDesk from "./pages/GroupDesk";
 import Proposals from "./pages/Proposals";
 import Debriefs from "./pages/Debriefs";
 import Profile from "./pages/Profile";
@@ -37,6 +38,9 @@ function Sidebar() {
         </NavLink>
         <NavLink to="/tracker" className={link}>
           Pipeline
+        </NavLink>
+        <NavLink to="/desk" className={link}>
+          Group desk
         </NavLink>
         <NavLink to="/proposals" className={link}>
           Proposals
@@ -89,6 +93,8 @@ export default function App() {
           <Route path="/topic/:id" element={<TopicDetail />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/tracker" element={<Tracker />} />
+          <Route path="/desk" element={<GroupDesk />} />
+          <Route path="/desk/:topicId" element={<GroupDesk />} />
           <Route path="/proposals" element={<Proposals />} />
           <Route path="/debriefs" element={<Debriefs />} />
           <Route path="/profile" element={<Profile />} />

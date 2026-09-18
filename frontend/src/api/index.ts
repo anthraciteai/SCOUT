@@ -1,8 +1,11 @@
 import { api, API_BASE } from "./client";
 import type {
+  AgentChatLog,
   AgentMeta,
   AgentRunResponse,
   AnalysisRun,
+  CatalogTopic,
+  CollabReport,
   Debrief,
   OllamaStatus,
   Proposal,
@@ -79,6 +82,19 @@ export const AnalysisApi = {
     api
       .post<AgentRunResponse>("/analysis/agent", { topic_id, agent, topics_meta, context, force })
       .then((r) => r.data),
+  getChat: (topic_id: string, agent: string) =>
+    api.get<AgentChatLog>(`/analysis/chat/${topic_id}/${agent}`).then((r) => r.data),
+  listChats: (topic_id: string) =>
+    api
+      .get<{ topic_id: string; chats: Record<string, AgentChatLog> }>(`/analysis/chat/${topic_id}`)
+      .then((r) => r.data),
+  sendChat: (body: {
+    topic_id: string;
+    agent: string;
+    message: string;
+    proposal_text?: string;
+    topics_meta?: Record<string, TopicMeta>;
+  }) => api.post<AgentChatLog>("/analysis/chat", body).then((r) => r.data),
 };
 
 // ---- Team (Collier) ----
@@ -164,6 +180,14 @@ export const MatchesApi = {
       .then((r) => r.data),
 };
 
+export const CatalogApi = {
+  status: () => api.get("/catalog/status").then((r) => r.data),
+  refresh: (force = false) =>
+    api.post("/catalog/refresh", {}, { params: { force } }).then((r) => r.data),
+  topic: (topic_id: string) =>
+    api.get<CatalogTopic>(`/catalog/topics/${topic_id}`).then((r) => r.data),
+};
+
 // ---- System ----
 export const SystemApi = {
   ollama: () => api.get<OllamaStatus>("/system/ollama").then((r) => r.data),
@@ -192,10 +216,20 @@ export const OrgApi = {
     api.get<SbirWorkspace>(`/org/sbir/${topic_id}`).then((r) => r.data),
   grant: (topic_id: string, meta?: Record<string, string>) =>
     api.post<SbirWorkspace>(`/org/sbir/${topic_id}/grant`, meta || { topic_id }).then((r) => r.data),
-  saveShared: (topic_id: string, name: "proposal.md" | "notes.md", text: string) =>
-    api.put(`/org/sbir/${topic_id}/shared/${name}`, { text }).then((r) => r.data),
+  saveShared: (topic_id: string, name: "proposal.md" | "notes.md", text: string, expected_sha?: string) =>
+    api.put(`/org/sbir/${topic_id}/shared/${name}`, { text, expected_sha }).then((r) => r.data),
   saveMine: (topic_id: string, name: "draft.md" | "notes.md", text: string) =>
     api.put(`/org/sbir/${topic_id}/mine/${name}`, { text }).then((r) => r.data),
+  collab: (topic_id: string) =>
+    api.get<CollabReport>(`/org/sbir/${topic_id}/collab`).then((r) => r.data),
+  refreshCollab: (topic_id: string, force = false) =>
+    api
+      .post<CollabReport>(`/org/sbir/${topic_id}/collab/refresh`, {}, { params: { force } })
+      .then((r) => r.data),
+  promoteCollab: (
+    topic_id: string,
+    body: { theme?: string; bullets?: string[]; expected_sha?: string }
+  ) => api.post(`/org/sbir/${topic_id}/collab/promote`, body).then((r) => r.data),
 };
 
 // ---- Streaming helper (for live proposal feedback) ----

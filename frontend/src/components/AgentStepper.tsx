@@ -1,32 +1,25 @@
-import { useState } from "react";
-import { AnalysisApi } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { AnalysisApi, CatalogApi, OrgApi } from "../api";
 import type { AgentResult, HewerResult, Topic, TeamRecommendation } from "../types";
 import { topicMeta } from "../pages/Browse";
 import HewerCard, { liftColor } from "./HewerCard";
 import TeamCard from "./TeamCard";
 import FlintCard, { type FlintResult } from "./FlintCard";
-
-const ORDER = ["Canari", "Vien", "Anthracite", "Collier", "Hewer", "Flint", "Davy"];
-
-const ROLES: Record<string, string> = {
-  Canari: "Fit / early warning",
-  Vien: "Technical feasibility",
-  Anthracite: "Business development",
-  Collier: "Who to add (teaming)",
-  Hewer: "Heavy lift + adaptation",
-  Flint: "Creative — your tools, unexpected uses",
-  Davy: "Capture strategy",
-};
-
-const COLORS: Record<string, string> = {
-  Canari: "#f0c419",
-  Vien: "#58a6ff",
-  Anthracite: "#9aa4b2",
-  Collier: "#c98b3a",
-  Hewer: "#e0704f",
-  Flint: "#e6c07b",
-  Davy: "#3fb950",
-};
+import AgentChat from "./AgentChat";
+import {
+  AGENTS,
+  COLORS,
+  CONTRIBUTES,
+  ORDER,
+  ROLES,
+  SLICES,
+  type AgentName,
+  type ContributeId,
+  type SliceId,
+  normalizeAgentResults,
+  productHeadings,
+  stripHtml,
+} from "./agentWorkspace";
 
 function GenericResult({ data }: { data: AgentResult }) {
   if (data?.raw) return <pre className="stream">{String(data.raw)}</pre>;
@@ -59,29 +52,82 @@ function renderAgent(name: string, data: AgentResult) {
   return <GenericResult data={data} />;
 }
 
-export default function AgentStepper({ topic }: { topic: Topic }) {
+export default function AgentStepper({
+  topic,
+  seed,
+}: {
+  topic: Topic;
+  seed?: Record<string, AgentResult> | null;
+}) {
   const topicId = topic.topicId || topic.topicCode || "";
-  const [results, setResults] = useState<Record<string, AgentResult>>({});
+  const [results, setResults] = useState<Record<string, AgentResult>>(
+    normalizeAgentResults(seed || {}),
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [runningAll, setRunningAll] = useState(false);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<AgentName>("Canari");
+  const [focus, setFocus] = useState<SliceId | ContributeId | null>("objective");
+  const [mission, setMission] = useState("");
+  const [products, setProducts] = useState("");
+  const [scoutPhrases, setScoutPhrases] = useState<string[]>([]);
+  const docRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (seed && Object.keys(seed).length) setResults(normalizeAgentResults(seed));
+  }, [topicId, seed]);
+
+  useEffect(() => {
+    OrgApi.company()
+      .then((c) => {
+        setMission((c.mission || "").trim());
+        setProducts((c.products || "").trim());
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!topicId) return;
+    CatalogApi.topic(topicId)
+      .then((t) => setScoutPhrases(t.phrases || []))
+      .catch(() => setScoutPhrases([]));
+  }, [topicId]);
 
   const meta = { [topicId]: topicMeta(topic) };
+  const spec = AGENTS[selected];
+
+  const docs: Record<SliceId, string> = {
+    component: [topic.component, topic.command, topic.program].filter(Boolean).join(" · "),
+    objective: stripHtml(String(topic.objective || topic.topicObjective || "")),
+    description: stripHtml(String(topic.description || topic.topicDescription || "")),
+    keywords: String(topic.keywords || ""),
+    scout_tags: scoutPhrases.join(" · "),
+    company_mission: mission,
+    products: products,
+    me: "Flint / Hewer / Collier read users/{you}/me.md — the ME resume, not the company brochure.",
+  };
+
+  function scrollSlice(id: SliceId) {
+    setFocus(id);
+    const el = docRef.current?.querySelector(`[data-slice="${id}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 
   async function runOne(name: string, acc?: Record<string, AgentResult>) {
     const prior = acc || results;
     setBusy(name);
     setError("");
+    setSelected(name as AgentName);
     try {
-      // Give later agents (Hewer, Davy) the peer notes gathered so far.
       const context =
         Object.keys(prior).length > 0 ? JSON.stringify(prior).slice(0, 6000) : undefined;
       const resp = await AnalysisApi.runAgent(topicId, name, meta, context, Boolean(prior[name]));
       const next = { ...prior, [name]: resp.result };
       setResults(next);
       return next;
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || e.message || `${name} failed`);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } }; message?: string };
+      setError(err?.response?.data?.detail || err.message || `${name} failed`);
       return prior;
     } finally {
       setBusy(null);
@@ -98,14 +144,19 @@ export default function AgentStepper({ topic }: { topic: Topic }) {
     setRunningAll(false);
   }
 
+  const headings = productHeadings(products);
+  const data = results[selected];
+  const running = busy === selected;
+  const lift = selected === "Hewer" ? (data as HewerResult)?.heavy_lift : undefined;
+
   return (
-    <div className="card">
+    <div className="card agent-workspace">
       <div className="row spread">
         <div>
-          <h3 style={{ margin: 0 }}>Run through each agent</h3>
+          <h3 style={{ margin: 0 }}>Agent workspace</h3>
           <div className="meta">
-            Step through the council one voice at a time, or run them all in order.
-            Flint only sparks from tools on the resume marked ME.
+            Canari, Vein, and Davy each ask whether that product maps to this SBIR. They
+            read the topic and our products.md — not a branch-mission gate.
           </div>
         </div>
         <button className="ghost" onClick={runAll} disabled={runningAll || busy != null}>
@@ -119,44 +170,141 @@ export default function AgentStepper({ topic }: { topic: Topic }) {
         </div>
       )}
 
-      <div style={{ marginTop: 10 }}>
-        {ORDER.map((name) => {
-          const data = results[name];
-          const running = busy === name;
-          const lift = name === "Hewer" ? (data as HewerResult)?.heavy_lift : undefined;
-          return (
-            <div
-              key={name}
-              className="card"
-              style={{
-                marginBottom: 8,
-                background: "var(--panel-2)",
-                borderColor:
-                  name === "Flint"
-                    ? "#e6c07b"
-                    : name === "Hewer" && lift != null
-                      ? liftColor(lift)
-                      : "var(--border)",
-              }}
-            >
-              <div className="row spread">
-                <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                  <span className="agent-dot" style={{ background: COLORS[name] }} />
-                  <strong>{name}</strong>
-                  <span className="meta">· {ROLES[name]}</span>
+      <div className="agent-workspace-grid">
+        <div className="agent-doc" ref={docRef}>
+          <div className="kv">Document they are parsing</div>
+          {(Object.keys(SLICES) as SliceId[]).map((id) => {
+            const cited = spec.reads.includes(id);
+            const text = docs[id];
+            if (!text && id !== "me" && id !== "scout_tags") return null;
+            return (
+              <button
+                type="button"
+                key={id}
+                data-slice={id}
+                className={`doc-slice ${cited ? "cited" : ""} ${focus === id ? "focus" : ""}`}
+                onClick={() => scrollSlice(id)}
+              >
+                <div className="row spread">
+                  <strong>{SLICES[id].label}</strong>
+                  <span className="meta">{SLICES[id].source}</span>
                 </div>
+                {id === "products" && headings.length > 0 ? (
+                  <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                    {headings.map((h) => (
+                      <span className="tag" key={h}>
+                        {h}
+                      </span>
+                    ))}
+                  </div>
+                ) : id === "scout_tags" && scoutPhrases.length > 0 ? (
+                  <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                    {scoutPhrases.map((h) => (
+                      <span className="tag" key={h}>
+                        {h}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p>{text.length > 420 ? `${text.slice(0, 420).trim()}…` : text || "—"}</p>
+                )}
+                {cited && <div className="slice-cite">{selected} is reading this</div>}
+              </button>
+            );
+          })}
+        </div>
+
+        <div>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {ORDER.map((name) => {
+              const on = selected === name;
+              const has = Boolean(results[name]);
+              return (
                 <button
-                  className="ghost small"
-                  onClick={() => runOne(name)}
-                  disabled={running || runningAll}
+                  key={name}
+                  className={on ? "small" : "ghost small"}
+                  style={
+                    on
+                      ? { background: COLORS[name], color: "#04121f" }
+                      : has
+                        ? { borderColor: COLORS[name], color: COLORS[name] }
+                        : undefined
+                  }
+                  onClick={() => {
+                    setSelected(name);
+                    setFocus(AGENTS[name].reads[0] || null);
+                  }}
                 >
-                  {running ? "Running…" : data ? "Re-run" : "Run"}
+                  {name}
+                  {has ? " ·" : ""}
                 </button>
+              );
+            })}
+          </div>
+
+          <div
+            className="card"
+            style={{
+              background: "var(--panel-2)",
+              borderColor:
+                selected === "Flint"
+                  ? "#e6c07b"
+                  : selected === "Hewer" && lift != null
+                    ? liftColor(lift)
+                    : COLORS[selected],
+            }}
+          >
+            <div className="row spread">
+              <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                <span className="agent-dot" style={{ background: COLORS[selected] }} />
+                <strong>{selected}</strong>
+                <span className="meta">· {ROLES[selected]}</span>
               </div>
-              {data && <div style={{ marginTop: 8 }}>{renderAgent(name, data)}</div>}
+              <button
+                className="ghost small"
+                onClick={() => runOne(selected)}
+                disabled={running || runningAll}
+              >
+                {running ? "Running…" : data ? "Re-run" : "Run"}
+              </button>
             </div>
-          );
-        })}
+            <p className="meta" style={{ margin: "8px 0 0" }}>
+              {spec.because}
+            </p>
+
+            <div className="kv" style={{ marginTop: 10 }}>
+              Reads
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+              {spec.reads.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`cite-chip ${focus === id ? "on" : ""}`}
+                  onClick={() => scrollSlice(id)}
+                >
+                  {SLICES[id].label}
+                </button>
+              ))}
+            </div>
+
+            <div className="kv" style={{ marginTop: 10 }}>
+              Can contribute
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+              {spec.contributes.map((id) => (
+                <span key={id} className="contrib-chip open" title={CONTRIBUTES[id].hint}>
+                  {CONTRIBUTES[id].label}
+                </span>
+              ))}
+            </div>
+
+            {data && <div style={{ marginTop: 12 }}>{renderAgent(selected, data)}</div>}
+            <div style={{ marginTop: 10 }}>
+              <AgentChat topicId={topicId} agent={selected} topicsMeta={meta} compact />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

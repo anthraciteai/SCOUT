@@ -10,6 +10,7 @@ import { topicMeta } from "./Browse";
 
 const AGENT_COLORS: Record<string, string> = {
   Canari: "#f0c419",
+  Vein: "#58a6ff",
   Vien: "#58a6ff",
   Anthracite: "#9aa4b2",
   Collier: "#c98b3a",
@@ -208,10 +209,10 @@ export default function Analysis() {
     <div>
       <h1>Council</h1>
       <p className="subtitle">
-        Optional deep pass — <strong>Canari</strong>, <strong>Vien</strong>,{" "}
+        Optional deep pass — <strong>Canari</strong>, <strong>Vein</strong>, and{" "}
+        <strong>Davy</strong> each map that product to the SBIR; then{" "}
         <strong>Anthracite</strong>, <strong>Collier</strong>, <strong>Hewer</strong>,{" "}
-        <strong>Flint</strong> (creative — your tools), and <strong>Davy</strong>. Inbox ranking
-        does not run this automatically.
+        <strong>Flint</strong>. Inbox ranking does not run this automatically.
       </p>
 
       {hasResume === false && (

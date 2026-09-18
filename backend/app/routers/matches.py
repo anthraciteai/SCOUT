@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
+from .. import catalog
 from ..db import get_session
 from ..matcher import run_scan, serialize_match
 from ..models import MatchScan, OpportunityMatch, Resume
@@ -64,17 +65,25 @@ def _payload(session: Session, resume: Optional[Resume]) -> dict:
             profile = json.loads(resume.extract_json)
         except json.JSONDecodeError:
             profile = None
+    if isinstance(profile, dict):
+        profile = {k: v for k, v in profile.items() if k != "_embedding"}
+    last_cat = catalog.latest_pass(session)
+    cat = catalog.serialize_pass(last_cat) if last_cat else None
+    if cat:
+        cat.pop("open_ids", None)
     return {
         "resume": {
             "id": resume.id,
             "name": resume.name,
             "chars": len(resume.text or ""),
+            "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
         },
         "profile": profile,
         "scanned_at": scan.created_at.isoformat() if scan else None,
         "queries": json.loads(scan.queries_json) if scan and scan.queries_json else [],
         "match_count": scan.match_count if scan else 0,
         "model": scan.model if scan else "",
+        "catalog": cat,
         "matches": [serialize_match(r) for r in rows],
     }
 
@@ -103,5 +112,6 @@ async def scan_matches(
         "id": resume.id,
         "name": resume.name,
         "chars": len(resume.text or ""),
+        "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
     }
     return result

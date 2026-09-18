@@ -10,6 +10,7 @@ from .org_seed import seed_org
 from .routers import (
     analysis,
     auth,
+    catalog,
     debriefs,
     matches,
     org,
@@ -48,6 +49,7 @@ app.include_router(auth.router)
 app.include_router(org.router)
 app.include_router(topics.router)
 app.include_router(matches.router)
+app.include_router(catalog.router)
 app.include_router(analysis.router)
 app.include_router(team.router)
 app.include_router(tracker.router)

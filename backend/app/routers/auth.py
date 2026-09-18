@@ -1,4 +1,4 @@
-"""Login, /me, and org roster. File employees.txt is the access list."""
+"""Login, /me, and org roster. companies/{id}/employees/{you} is the access gate."""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,7 +22,10 @@ class LoginBody(BaseModel):
 def status():
     v = get_vault()
     users = []
+    company = settings.default_company
     for p in PEOPLE:
+        if not v.exists(v.employee_key(company, p["user_id"])):
+            continue
         users.append(
             {
                 "user_id": p["user_id"],
@@ -32,7 +35,7 @@ def status():
         )
     extra = [
         u
-        for u in v.company_employees(settings.default_company)
+        for u in v.company_employees(company)
         if u not in {p["user_id"] for p in PEOPLE}
     ]
     for uid in extra:
@@ -60,14 +63,11 @@ async def login(body: LoginBody):
         raise HTTPException(status_code=400, detail="username required")
     company = (body.company_id or settings.default_company).strip()
 
-    if uid not in v.company_employees(company) and company not in v.lines(f"users/{uid}/companies.txt"):
-        # Keycloak-backed users may exist without a vault row yet — still require employees.txt
-        # unless AUTH_DISABLED (dev convenience).
-        if not settings.auth_disabled:
-            raise HTTPException(
-                status_code=403,
-                detail=f"{uid} is not in companies/{company}/employees.txt",
-            )
+    if not v.in_company(Identity(user_id=uid, company_id=company, display_name=uid, groups=[]), company):
+        raise HTTPException(
+            status_code=403,
+            detail=f"{uid} is not employed at {company} (missing companies/{company}/employees/{uid})",
+        )
 
     if not settings.auth_disabled:
         if not verify_password(v, uid, body.password):
@@ -78,8 +78,6 @@ async def login(body: LoginBody):
             else:
                 raise HTTPException(status_code=401, detail="Bad password")
 
-    v.append_unique(f"companies/{company}/employees.txt", uid)
-    v.append_unique(f"users/{uid}/companies.txt", company)
     name = v.read_text(f"users/{uid}/display_name.txt").strip() or uid
     if not v.read_text(f"users/{uid}/display_name.txt").strip():
         v.write_text(f"users/{uid}/display_name.txt", uid + "\n")
@@ -118,6 +116,7 @@ def _serialize(ident: Identity, v) -> dict:
         "auth": ident.auth,
         "skills": v.lines(f"users/{ident.user_id}/skills.txt"),
         "sbirs": v.user_sbirs(ident.user_id),
+        "companies": v.user_companies(ident.user_id),
         "in_company": v.in_company(ident, ident.company_id),
     }
 

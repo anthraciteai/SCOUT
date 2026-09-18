@@ -16,7 +16,11 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2:3b"
     ollama_fallback_model: str = "llama3.1:8b"
+    ollama_embed_model: str = "nomic-embed-text"
     ollama_timeout: float = 600.0
+    catalog_page_size: int = 50
+    catalog_max_pages: int = 40
+    catalog_enrich_per_pass: int = 0  # 0 = every open topic (LLM details pass)
 
     # Storage
     database_url: str = "sqlite:////data/scout.db"

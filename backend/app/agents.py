@@ -1,8 +1,8 @@
 """The SCOUT agent council.
 
-Each agent is a persona with a focused role. They analyze a DSIP topic against
-the user's resume/capabilities and return structured JSON. Davy + the Council
-synthesize a final GO / NO-GO recommendation with a fit score.
+Canari, Vein, and Davy speak for those products: does this SBIR map to what
+that product actually does. Other voices (Anthracite, Collier, Hewer, Flint)
+stay people. Council synthesizes a GO / NO-GO.
 """
 import json
 from typing import Any, Optional
@@ -14,25 +14,32 @@ from . import ollama_client
 
 AGENTS: dict[str, dict[str, str]] = {
     "Canari": {
-        "role": "Fit Scout & Early-Warning",
+        "role": "Canari the product",
         "system": (
-            "You are Canari, the canary-in-the-coal-mine fit scout for a small business "
-            "pursuing DoD SBIR/STTR topics. You give a fast, blunt go/no-go signal and surface "
-            "RED FLAGS early: eligibility issues, mismatched scope, unrealistic timelines, "
-            "incumbent lock-in, or requirements far outside the applicant's demonstrated skills. "
-            "You are skeptical and protective of the applicant's time.\n"
+            "You speak for CANARI, Anthracite's aircraft-health product: PX4 ULog parse, "
+            "pre-flight and post-flight scoring, GREEN / AMBER / RED, robust z / Mahalanobis "
+            "vs flock and vs self, Jetson on-device history. There is no LLM in the safety path.\n"
+            "Your only job: does THIS DoD SBIR/STTR map to Canari's goals and objectives? "
+            "Judge the topic objective and description against what CANARI actually does. "
+            "Do NOT ask whether the topic belongs to the Army/Navy/USAF/USMC mission. "
+            "Do NOT act as a generic go/no-go scout for the company as a whole.\n"
             "Return ONLY JSON with keys: "
             '{"signal": "green|yellow|red", "quick_take": string, '
-            '"red_flags": [string], "eligibility_notes": [string], "confidence": 0-100}.'
+            '"maps_to_canari": true|false, '
+            '"objective_matches": [string], "gaps": [string], "confidence": 0-100}.'
         ),
     },
-    "Vien": {
-        "role": "Technical Analyst",
+    "Vein": {
+        "role": "Vein as a product",
         "system": (
-            "You are Vien, a rigorous technical analyst. You assess technical feasibility of a "
-            "DoD SBIR/STTR topic and how well the applicant's demonstrated skills (from their resume) "
-            "map to the required technical work. Identify concrete capability matches, gaps, and the "
-            "technical approach that would be needed.\n"
+            "You speak for VEIN, Anthracite's fleet C2 / COP product: TAK / ATAK / WinTAK, "
+            "live telemetry and video, mission planning, grouping and assignment, signed "
+            "commands with audit, DDIL store-and-forward. VEIN is the product, not a "
+            "generic technical analyst.\n"
+            "Your only job: does Vein as a product map to THIS SBIR's objectives? "
+            "Map the required technical work to capabilities VEIN actually ships and skills "
+            "we can actually show. Do not invent features. Do not grade the sponsoring "
+            "branch's mission.\n"
             "Return ONLY JSON with keys: "
             '{"technical_summary": string, "capability_matches": [string], '
             '"capability_gaps": [string], "suggested_approach": [string], '
@@ -118,28 +125,54 @@ AGENTS: dict[str, dict[str, str]] = {
         ),
     },
     "Davy": {
-        "role": "Capture Strategist",
+        "role": "Davy — voice-activated C2",
         "system": (
-            "You are Davy, a capture strategist. Given the topic, the applicant's resume, and the notes "
-            "from Canari (fit), Vien (technical), Anthracite (business), Collier (teaming), Hewer "
-            "(lift/adaptation), and Flint (creative tool reuse), synthesize an actionable capture plan: "
-            "the win themes and discriminators to emphasize, key questions to ask the TPOC, and "
-            "immediate next actions if pursuing. Steal Flint's best spark as a discriminator when it is "
-            "defensible.\n"
+            "You speak for DAVY, Anthracite's voice-activated C2 system: wake word, on-device "
+            "speech-to-text, speech-to-intent, spoken confirmations, local inference. Davy emits "
+            "authorized intent into VEIN and never bypasses command leases. Davy is NOT a "
+            "capture strategist, NOT a proposal writer, and NOT a program-officer briefer.\n"
+            "Your only job: look at Davy's own capabilities and decide whether they meet THIS "
+            "SBIR's objectives. If the topic is not about voice C2, spoken command, hands-busy "
+            "control, or that class of operator interface, say so.\n"
             "Return ONLY JSON with keys: "
-            '{"win_themes": [string], "discriminators": [string], '
-            '"questions_for_tpoc": [string], "next_actions": [string], '
-            '"bid_lean": "GO|LEAN GO|LEAN NO-GO|NO-GO"}.'
+            '{"signal": "green|yellow|red", "quick_take": string, '
+            '"capabilities_in_play": [string], "objective_matches": [string], '
+            '"gaps": [string], "confidence": 0-100}.'
         ),
     },
 }
 
+# Old council blobs / API used "Vien". Vein is the product name.
+AGENTS["Vien"] = AGENTS["Vein"]
+
+PRODUCT_LENS = {
+    "Canari": (
+        "PRODUCT UNDER REVIEW: CANARI only (PX4 ULog health, GREEN/AMBER/RED, on-device). "
+        "Question: does this SBIR map to Canari's goals and objectives?"
+    ),
+    "Vein": (
+        "PRODUCT UNDER REVIEW: VEIN only (fleet C2 / COP). "
+        "Question: does Vein as a product map to this SBIR's objectives?"
+    ),
+    "Davy": (
+        "PRODUCT UNDER REVIEW: DAVY only (voice-activated C2). "
+        "Look at Davy's own capabilities. Do they meet this SBIR's objectives? "
+        "Do not write capture strategy or win themes."
+    ),
+}
+
+
+def canonical_agent(name: str) -> str:
+    return "Vein" if name == "Vien" else name
+
+
 COUNCIL_SYSTEM = (
     "You are the SCOUT Council chair. You are given a DoD SBIR/STTR topic, the applicant's "
-    "ME resume + company capabilities, and structured assessments from Canari (fit), Vien "
-    "(technical), Anthracite (business), Hewer (lift), Flint (creative tool reuse), and Davy "
-    "(capture). Produce the final recommendation. Credit a Flint spark when it is a real "
-    "discriminator.\n"
+    "ME resume + company products, and structured assessments from Canari (does the SBIR map "
+    "to Canari the product), Vein (does Vein as a product map to the objectives), Davy "
+    "(does the voice-C2 product meet the objectives), Anthracite (business), Hewer (lift), "
+    "and Flint (creative tool reuse). Produce the final recommendation. Credit a Flint spark "
+    "when it is a real discriminator.\n"
     "Return ONLY JSON with keys: "
     '{"fit_score": 0-100, "recommendation": "GO|LEAN GO|LEAN NO-GO|NO-GO", '
     '"rationale": string, "top_strengths": [string], "top_risks": [string], '
@@ -219,11 +252,14 @@ def _agent_prompt(topic_text: str, resume_text: str, extra: str = "") -> str:
 # ---- Orchestration -------------------------------------------------------
 
 async def run_single_agent(name: str, topic_text: str, resume_text: str, extra: str = "") -> dict[str, Any]:
+    name = canonical_agent(name)
     spec = AGENTS[name]
     try:
         temperature = float(spec.get("temperature") or 0.3)
     except (TypeError, ValueError):
         temperature = 0.3
+    lens = PRODUCT_LENS.get(name, "")
+    extra = f"{extra}\n\n{lens}".strip() if lens else extra
     out = await ollama_client.chat(
         spec["system"],
         _agent_prompt(topic_text, resume_text, extra),
@@ -244,35 +280,25 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     # agents concurrently just queues them (and can trip per-request timeouts on
     # slow CPU inference). Run them sequentially - same wall-clock, no queueing.
     canari = await run_single_agent("Canari", topic_text, resume_text)
-    vien = await run_single_agent("Vien", topic_text, resume_text)
+    vein = await run_single_agent("Vein", topic_text, resume_text)
+    davy = await run_single_agent("Davy", topic_text, resume_text)
     anthracite = await run_single_agent("Anthracite", topic_text, resume_text)
     collier = await run_single_agent("Collier", topic_text, resume_text)
 
     hewer_notes = (
-        "\n\nTECHNICAL NOTES (from Vien):\n" + json.dumps(vien)[:2000]
+        "\n\nTECHNICAL NOTES (from Vein):\n" + json.dumps(vein)[:2000]
     )
     hewer = await run_single_agent("Hewer", topic_text, resume_text, extra=hewer_notes)
 
     flint_notes = (
-        "\n\nTECHNICAL NOTES (from Vien):\n" + json.dumps(vien)[:1500]
+        "\n\nTECHNICAL NOTES (from Vein):\n" + json.dumps(vein)[:1500]
         + "\n\nLIFT NOTES (from Hewer):\n" + json.dumps(hewer)[:1500]
     )
     flint = await run_single_agent("Flint", topic_text, resume_text, extra=flint_notes)
 
-    peer_notes = (
-        "\n\nPEER ASSESSMENTS:\n"
-        f"Canari (fit): {json.dumps(canari)[:1800]}\n"
-        f"Vien (technical): {json.dumps(vien)[:1800]}\n"
-        f"Anthracite (business): {json.dumps(anthracite)[:1800]}\n"
-        f"Collier (teaming): {json.dumps(collier)[:1500]}\n"
-        f"Hewer (lift): {json.dumps(hewer)[:1500]}\n"
-        f"Flint (creative tools): {json.dumps(flint)[:2000]}\n"
-    )
-    davy = await run_single_agent("Davy", topic_text, resume_text, extra=peer_notes)
-
     agents = {
         "Canari": canari,
-        "Vien": vien,
+        "Vein": vein,
         "Anthracite": anthracite,
         "Collier": collier,
         "Hewer": hewer,
@@ -326,3 +352,146 @@ def extract_heavy_lift(agents: dict[str, Any]) -> Optional[float]:
         return float(val) if val is not None else None
     except (TypeError, ValueError):
         return None
+
+
+# ---- Working conversation (not the structured JSON run) --------------------
+
+CHAT_ADDENDUM = (
+    "You are now in a working conversation with the applicant about THIS DoD SBIR/STTR "
+    "topic and their proposal. Reply in clear prose — never JSON, never a fenced code "
+    "block unless they ask for paste-ready proposal language.\n"
+    "Rules for this conversation:\n"
+    "- Stay in your role. Do not impersonate other agents.\n"
+    "- If they reject an idea because of a license, ITAR, missing skill, cost, or policy, "
+    "ACCEPT the constraint immediately. Do not argue. Drop the blocked piece and replace "
+    "it with a substitute that still uses only tools from the ME resume.\n"
+    "- Name the thing you dropped and the thing you put in its place.\n"
+    "- When they are writing, offer short paste-ready paragraphs they can drop into the "
+    "proposal.\n"
+    "- Keep replies tight: a short take, then bullets if needed."
+)
+
+
+def opening_message(name: str, result: dict[str, Any]) -> str:
+    """Turn a structured agent run into the first bubble of the working log."""
+    if not result:
+        return ""
+    if name == "Flint":
+        lines = [
+            "Here is what I would pitch from tools on your ME resume — not the company brochure.",
+            "",
+        ]
+        for i, spark in enumerate(result.get("sparks") or [], 1):
+            if not isinstance(spark, dict):
+                continue
+            title = spark.get("title") or f"Spark {i}"
+            hook = spark.get("hook") or ""
+            tools = ", ".join(str(t) for t in (spark.get("tools") or []) if t)
+            lines.append(f"{i}. {title}" + (f" — {hook}" if hook else ""))
+            if tools:
+                lines.append(f"   Tools: {tools}")
+        if result.get("left_field"):
+            lines.append(f"\nLeft field: {result['left_field']}")
+        fake = result.get("do_not_fake") or []
+        if fake:
+            lines.append("Do not fake: " + "; ".join(str(x) for x in fake))
+        lines.append(
+            "\nPush back if a license, ITAR, or missing skill kills a spark. I will substitute."
+        )
+        return "\n".join(lines).strip()
+    if name == "Hewer":
+        lift = result.get("heavy_lift")
+        plan = result.get("adaptation_plan") or []
+        lines = [
+            f"Lift to adapt what you already have: {lift}/10." if lift is not None else "Lift notes:",
+            result.get("lift_rationale") or "",
+        ]
+        if plan:
+            lines.append("Adaptation plan:")
+            lines.extend(f"- {step}" for step in plan[:6])
+        lines.append("Tell me what you cannot ship (license, ITAR, missing kit) and I will re-plan.")
+        return "\n".join(p for p in lines if p).strip()
+    if name == "Collier":
+        roles = result.get("roles_to_add") or []
+        lines = ["Who to add so this bid is staffed:"]
+        for r in roles[:5]:
+            if isinstance(r, dict):
+                why = r.get("why") or ""
+                lines.append(f"- {r.get('role', 'role')}" + (f": {why}" if why else ""))
+            else:
+                lines.append(f"- {r}")
+        lines.append("Say who you already have, or cannot bring, and I will restack the crew.")
+        return "\n".join(lines).strip()
+    if name == "Davy":
+        take = result.get("quick_take") or ""
+        caps = result.get("capabilities_in_play") or []
+        lines = [
+            f"Signal: {result.get('signal', '—')}. {take}",
+            "Davy is the voice-activated C2 product — this is whether those capabilities meet the SBIR.",
+        ]
+        if caps:
+            lines.append("In play: " + "; ".join(str(c) for c in caps[:6]))
+        return "\n".join(lines).strip()
+    if name == "Canari":
+        return (
+            f"Signal: {result.get('signal', '—')}. {result.get('quick_take') or ''}\n"
+            "This is whether the SBIR maps to Canari’s goals and objectives, not a branch-mission check."
+        ).strip()
+    if name in ("Vein", "Vien"):
+        return (
+            f"{result.get('technical_summary') or 'Vein product take on file.'}\n"
+            "Vein as a product — if a required approach is something VEIN does not ship, say so."
+        ).strip()
+    if name == "Anthracite":
+        return (
+            f"{result.get('customer_need') or result.get('strategic_value') or 'Business take on file.'}\n"
+            "Constraints (license, teaming limits, transition) belong in this thread."
+        ).strip()
+    # generic fallback
+    take = result.get("quick_take") or result.get("raw") or json.dumps(result)[:800]
+    return str(take)
+
+
+def _clip_history(history: list[dict[str, Any]], *, max_msgs: int = 24, max_chars: int = 14000) -> list[dict[str, Any]]:
+    rows = [m for m in history if isinstance(m, dict) and (m.get("text") or m.get("content"))]
+    rows = rows[-max_msgs:]
+    total = 0
+    kept: list[dict[str, Any]] = []
+    for m in reversed(rows):
+        text = str(m.get("text") or m.get("content") or "")
+        total += len(text)
+        if total > max_chars and kept:
+            break
+        kept.append(m)
+    kept.reverse()
+    return kept
+
+
+async def chat_with_agent(
+    name: str,
+    topic_text: str,
+    resume_text: str,
+    history: list[dict[str, Any]],
+    user_message: str,
+    extra: str = "",
+) -> str:
+    """Continue a working conversation. Returns assistant prose (not JSON)."""
+    name = canonical_agent(name)
+    spec = AGENTS[name]
+    try:
+        temperature = min(0.7, float(spec.get("temperature") or 0.4) + 0.1)
+    except (TypeError, ValueError):
+        temperature = 0.4
+    lens = PRODUCT_LENS.get(name, "")
+    extra = f"{extra}\n\n{lens}".strip() if lens else extra
+    briefing = _agent_prompt(topic_text, resume_text, extra)
+    system = spec["system"].split("Return ONLY JSON")[0].strip() + "\n\n" + CHAT_ADDENDUM
+    system += "\n\nWORKING CONTEXT (topic + resume + current draft):\n" + briefing[:9000]
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    for m in _clip_history(history):
+        role = "assistant" if str(m.get("role") or "").lower() in ("assistant", "agent") else "user"
+        text = str(m.get("text") or m.get("content") or "").strip()
+        if text:
+            messages.append({"role": role, "content": text})
+    messages.append({"role": "user", "content": user_message.strip()})
+    return await ollama_client.chat_messages(messages, temperature=temperature, format_json=False)

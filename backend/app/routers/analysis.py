@@ -1,14 +1,15 @@
 """Run the agent council on selected topics."""
 import json
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from .. import agents, dsip
+from .. import agents, collab, dsip
 from ..db import get_session
-from ..identity import current_identity
+from ..identity import Identity, current_identity, get_identity
 from ..models import AnalysisRun
 from ..resume_service import get_resume_text
 from ..vault import get_vault
@@ -88,14 +89,39 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
         result = await agents.analyze_topic(topic, resume_text)
         score, rec = agents.extract_score_and_rec(result.get("council", {}))
         heavy_lift = agents.extract_heavy_lift(result.get("agents", {}))
-
+        blob_sha = None
+        cached_at = None
+        if ident:
+            _seed_chats(vault, ident, topic_id, result.get("agents") or {})
+            body = vault.cache_put(
+                vault.user_path(topic_id, ident, "council.json"),
+                {"result": result, "fit_score": score, "recommendation": rec, "heavy_lift": heavy_lift},
+                result.get("model", ""),
+                "council",
+            )
+            blob_sha = body.get("sha")
+            cached_at = body.get("cached_at")
+            if not vault.exists(vault.shared_path(topic_id, ident, "council.json")):
+                vault.cache_put(
+                    vault.shared_path(topic_id, ident, "council.json"),
+                    {
+                        "result": result,
+                        "fit_score": score,
+                        "recommendation": rec,
+                        "heavy_lift": heavy_lift,
+                        "author": ident.user_id,
+                    },
+                    result.get("model", ""),
+                    "council",
+                )
+            collab.publish_card(vault, topic_id, ident)
         run = AnalysisRun(
             topic_id=topic_id,
             topic_code=topic.get("topicCode") or topic.get("finalTopicCode"),
             title=topic.get("topicTitle") or topic.get("title"),
             model=result.get("model", ""),
             resume_id=resume_id,
-            result_json=json.dumps(result),
+            result_json=json.dumps({"sha": blob_sha} if blob_sha else result),
             fit_score=score,
             heavy_lift=heavy_lift,
             recommendation=rec,
@@ -105,22 +131,9 @@ async def run_analysis(req: RunRequest, session: Session = Depends(get_session))
         session.refresh(run)
         payload = _serialize(run)
         if ident:
-            body = vault.cache_put(
-                vault.user_path(topic_id, ident, "council.json"),
-                {"result": result, "fit_score": score, "recommendation": rec, "heavy_lift": heavy_lift},
-                result.get("model", ""),
-                "council",
-            )
-            # First org council also becomes the federated copy if none exists yet.
-            if not vault.exists(vault.shared_path(topic_id, ident, "council.json")):
-                vault.cache_put(
-                    vault.shared_path(topic_id, ident, "council.json"),
-                    {"result": result, "fit_score": score, "recommendation": rec, "heavy_lift": heavy_lift, "author": ident.user_id},
-                    result.get("model", ""),
-                    "council",
-                )
-            payload["cached_at"] = body.get("cached_at")
+            payload["cached_at"] = cached_at
             payload["cached"] = False
+            payload["sha"] = blob_sha
         runs.append(payload)
 
     return {"runs": runs}
@@ -145,6 +158,21 @@ def _from_cache(topic_id: str, topic: dict, cached: dict) -> dict:
     }
 
 
+def _result_from_store(raw: str) -> dict:
+    try:
+        obj = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    if obj.get("sha") and "agents" not in obj and "council" not in obj:
+        blob = get_vault().get_blob(str(obj["sha"])) or {}
+        if isinstance(blob, dict) and isinstance(blob.get("result"), dict):
+            return blob["result"]
+        return blob if isinstance(blob, dict) else {}
+    return obj
+
+
 def _serialize(run: AnalysisRun) -> dict:
     return {
         "id": run.id,
@@ -157,7 +185,7 @@ def _serialize(run: AnalysisRun) -> dict:
         "recommendation": run.recommendation,
         "created_at": run.created_at.isoformat(),
         "cached": False,
-        "result": json.loads(run.result_json or "{}"),
+        "result": _result_from_store(run.result_json or "{}"),
     }
 
 
@@ -190,7 +218,8 @@ async def run_agent(req: AgentRequest, session: Session = Depends(get_session)):
 
     ident = current_identity()
     vault = get_vault()
-    cache_name = "flint.json" if req.agent == "Flint" else f"{req.agent.lower()}.json"
+    agent_name = agents.canonical_agent(req.agent)
+    cache_name = "flint.json" if agent_name == "Flint" else f"{agent_name.lower()}.json"
     if ident:
         vault.grant_sbir(
             ident,
@@ -203,9 +232,12 @@ async def run_agent(req: AgentRequest, session: Session = Depends(get_session)):
         )
         if not req.force:
             cached = vault.cache_get(vault.user_path(req.topic_id, ident, cache_name))
+            if not cached and agent_name == "Vein":
+                cached = vault.cache_get(vault.user_path(req.topic_id, ident, "vien.json"))
             if cached and cached.get("result"):
+                _seed_chat(vault, ident, req.topic_id, agent_name, cached["result"], cached.get("model") or "")
                 return {
-                    "agent": req.agent,
+                    "agent": agent_name,
                     "result": cached["result"],
                     "model": cached.get("model") or "",
                     "cached": True,
@@ -213,17 +245,189 @@ async def run_agent(req: AgentRequest, session: Session = Depends(get_session)):
                 }
 
     topic_text = agents.summarize_topic(topic)
-    extra = f"\n\nPEER ASSESSMENTS:\n{req.context}" if req.context else ""
-    result = await agents.run_single_agent(req.agent, topic_text, resume_text, extra=extra)
+    extra = ""
+    if req.context and agent_name not in agents.PRODUCT_LENS:
+        extra = f"\n\nPEER ASSESSMENTS:\n{req.context}"
+    result = await agents.run_single_agent(agent_name, topic_text, resume_text, extra=extra)
     model = await agents.ollama_client.resolve_model()
     if ident:
         vault.cache_put(
             vault.user_path(req.topic_id, ident, cache_name),
             {"result": result},
             model,
-            req.agent.lower(),
+            agent_name.lower(),
         )
-    return {"agent": req.agent, "result": result, "model": model, "cached": False}
+        _seed_chat(vault, ident, req.topic_id, agent_name, result, model)
+        collab.publish_card(vault, req.topic_id, ident)
+    return {"agent": agent_name, "result": result, "model": model, "cached": False}
+
+
+class ChatRequest(BaseModel):
+    topic_id: str
+    agent: str
+    message: str
+    proposal_text: Optional[str] = None
+    resume_id: Optional[int] = None
+    topics_meta: Optional[dict[str, dict]] = None
+
+
+def _seed_chat(vault, ident: Identity, topic_id: str, agent: str, result: dict, model: str = "") -> None:
+    log = vault.read_chat(topic_id, ident, agent)
+    if log.get("messages"):
+        return
+    opening = agents.opening_message(agent, result or {})
+    if not opening:
+        return
+    log["model"] = model
+    log["messages"] = [
+        {
+            "role": "assistant",
+            "speaker": agent,
+            "text": opening,
+            "kind": "opening",
+            "at": datetime.utcnow().isoformat() + "Z",
+        }
+    ]
+    vault.write_chat(topic_id, ident, agent, log)
+
+
+def _seed_chats(vault, ident: Identity, topic_id: str, agent_results: dict) -> None:
+    for name, result in (agent_results or {}).items():
+        if isinstance(result, dict):
+            _seed_chat(vault, ident, topic_id, name, result)
+
+
+def _proposal_context(vault, ident: Identity, topic_id: str, live_text: Optional[str] = None) -> str:
+    parts: list[str] = []
+    live = (live_text or "").strip()
+    if live:
+        parts.append("CURRENT EDITOR DRAFT (unsaved ok):\n" + live[:6000])
+    shared = vault.read_text(vault.shared_path(topic_id, ident, "proposal.md")).strip()
+    if shared and shared != live:
+        parts.append("SHARED ORG PROPOSAL:\n" + shared[:4000])
+    mine = vault.read_text(vault.user_path(topic_id, ident, "draft.md")).strip()
+    if mine and mine != live and mine != shared:
+        parts.append("PRIVATE DRAFT:\n" + mine[:3000])
+    return "\n\n".join(parts)
+
+
+@router.get("/chat/{topic_id}/{agent}")
+def get_chat(topic_id: str, agent: str, ident: Identity = Depends(get_identity)):
+    if agent not in agents.AGENTS:
+        raise HTTPException(status_code=400, detail=f"Unknown agent '{agent}'")
+    vault = get_vault()
+    log = vault.read_chat(topic_id, ident, agent)
+    if not log.get("messages"):
+        cache_name = "flint.json" if agent == "Flint" else f"{agent.lower()}.json"
+        cached = vault.cache_get(vault.user_path(topic_id, ident, cache_name))
+        if cached and cached.get("result"):
+            _seed_chat(vault, ident, topic_id, agent, cached["result"], cached.get("model") or "")
+            log = vault.read_chat(topic_id, ident, agent)
+    return {
+        "agent": agent,
+        "role": agents.AGENTS[agent]["role"],
+        "path": vault.chat_path(topic_id, ident, agent),
+        "messages": log.get("messages") or [],
+        "model": log.get("model") or "",
+        "updated_at": log.get("updated_at"),
+    }
+
+
+@router.get("/chat/{topic_id}")
+def list_chats(topic_id: str, ident: Identity = Depends(get_identity)):
+    vault = get_vault()
+    counts = vault.list_chats(topic_id, ident)
+    chats = {}
+    for name in agents.AGENTS:
+        log = vault.read_chat(topic_id, ident, name)
+        chats[name] = {
+            "agent": name,
+            "role": agents.AGENTS[name]["role"],
+            "messages": log.get("messages") or [],
+            "count": counts.get(name.lower(), len(log.get("messages") or [])),
+            "updated_at": log.get("updated_at"),
+        }
+    return {"topic_id": topic_id, "chats": chats}
+
+
+@router.post("/chat")
+async def post_chat(req: ChatRequest, session: Session = Depends(get_session)):
+    if req.agent not in agents.AGENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown agent '{req.agent}'. Options: {list(agents.AGENTS)}",
+        )
+    text = (req.message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message is empty")
+    ident = current_identity()
+    if not ident:
+        raise HTTPException(status_code=401, detail="Sign in to record the chat")
+
+    agent_name = agents.canonical_agent(req.agent)
+    vault = get_vault()
+    vault.grant_sbir(ident, req.topic_id, {"topic_id": req.topic_id})
+
+    try:
+        topic = await dsip.get_topic(req.topic_id)
+    except Exception:
+        topic = {"topicId": req.topic_id}
+    if isinstance(topic, dict) and "topic" in topic and isinstance(topic["topic"], dict):
+        topic = {**topic, **topic["topic"]}
+    topic = _merge_meta(topic, (req.topics_meta or {}).get(req.topic_id))
+
+    _, resume_text = get_resume_text(session, req.resume_id)
+    extra = _proposal_context(vault, ident, req.topic_id, req.proposal_text)
+    cache_name = "flint.json" if agent_name == "Flint" else f"{agent_name.lower()}.json"
+    cached = vault.cache_get(vault.user_path(req.topic_id, ident, cache_name))
+    if not cached and agent_name == "Vein":
+        cached = vault.cache_get(vault.user_path(req.topic_id, ident, "vien.json"))
+    prior = (cached or {}).get("result") if cached else None
+    if prior:
+        extra = (
+            (extra + "\n\n" if extra else "")
+            + f"YOUR EARLIER STRUCTURED TAKE:\n{json.dumps(prior)[:2500]}"
+        )
+
+    log = vault.read_chat(req.topic_id, ident, agent_name)
+    if not log.get("messages") and prior:
+        _seed_chat(vault, ident, req.topic_id, agent_name, prior)
+        log = vault.read_chat(req.topic_id, ident, agent_name)
+
+    now = datetime.utcnow().isoformat() + "Z"
+    history = list(log.get("messages") or [])
+    user_row = {
+        "role": "user",
+        "speaker": ident.user_id,
+        "text": text,
+        "at": now,
+    }
+    reply = await agents.chat_with_agent(
+        agent_name,
+        agents.summarize_topic(topic),
+        resume_text,
+        history,
+        text,
+        extra=extra,
+    )
+    model = await agents.ollama_client.resolve_model()
+    assistant_row = {
+        "role": "assistant",
+        "speaker": agent_name,
+        "text": reply.strip(),
+        "at": datetime.utcnow().isoformat() + "Z",
+    }
+    log["model"] = model
+    log["messages"] = history + [user_row, assistant_row]
+    saved = vault.write_chat(req.topic_id, ident, agent_name, log)
+    return {
+        "agent": agent_name,
+        "role": agents.AGENTS[agent_name]["role"],
+        "path": vault.chat_path(req.topic_id, ident, agent_name),
+        "messages": saved["messages"],
+        "model": model,
+        "updated_at": saved.get("updated_at"),
+    }
 
 
 @router.get("/agents")

@@ -91,7 +91,49 @@ class OpportunityMatch(SQLModel, table=True):
     score: float = 0.0  # 0-100 keyword overlap
     reasons_json: str = "[]"
     queries_json: str = "[]"  # which profile queries retrieved this
+    tags_json: str = "[]"
     raw_json: Optional[str] = None
+    created_at: datetime = Field(default_factory=_now)
+
+
+class TopicIndex(SQLModel, table=True):
+    """Cached open-window topic. Enriched once per content fingerprint (monthly drop)."""
+
+    __tablename__ = "topic_index"
+
+    topic_id: str = Field(primary_key=True)
+    topic_code: Optional[str] = None
+    title: Optional[str] = None
+    component: Optional[str] = None
+    program: Optional[str] = None
+    topic_status: Optional[str] = None
+    solicitation_title: Optional[str] = None
+    fingerprint: str = Field(index=True, default="")
+    content_sha: str = ""
+    tags_json: str = "{}"
+    embedding_json: Optional[str] = None
+    raw_json: Optional[str] = None
+    open_ms: Optional[int] = Field(default=None, index=True)
+    close_ms: Optional[int] = None
+    prerelease_ms: Optional[int] = None
+    enriched: bool = False
+    first_seen_at: datetime = Field(default_factory=_now)
+    indexed_at: datetime = Field(default_factory=_now)
+
+
+class CatalogPass(SQLModel, table=True):
+    """One pagination pass over the open DSIP window."""
+
+    __tablename__ = "catalog_pass"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pages: int = 0
+    listed: int = 0
+    new_topics: int = 0
+    reused: int = 0
+    enriched: int = 0
+    newest_open_ms: Optional[int] = None
+    embed_model: str = ""
     created_at: datetime = Field(default_factory=_now)
 
 

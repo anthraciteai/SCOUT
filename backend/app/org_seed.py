@@ -108,18 +108,37 @@ def verify_password(vault: Vault, user_id: str, password: str) -> bool:
     return stored == _passwd(user_id, password)
 
 
+def _seed_tags(vault: Vault) -> None:
+    """Prefix-local packs: companies/{id}/tags.json and users/{id}/resume/…"""
+    from . import catalog
+
+    catalog.refresh_company_tags_from_vault(COMPANY)
+    for p in PEOPLE:
+        uid = p["user_id"]
+        me = vault.read_text(f"users/{uid}/me.md")
+        skills = "\n".join(vault.lines(f"users/{uid}/skills.txt"))
+        blob = f"{me}\n{skills}".strip()
+        if blob:
+            catalog.refresh_resume_tags_from_text(uid, blob, kind="me")
+
+
 def seed_org(vault: Vault) -> None:
-    emp_key = f"companies/{COMPANY}/employees.txt"
-    if vault.exists(emp_key) and vault.lines(emp_key):
+    emp_txt = f"companies/{COMPANY}/employees.txt"
+    already = bool(vault.company_employees(COMPANY) or vault.lines(emp_txt))
+    if already:
         _maybe_fill_products(vault)
+        if not vault.company_employees(COMPANY):
+            names = vault.lines(emp_txt) or [p["user_id"] for p in PEOPLE]
+            for uid in names:
+                label = vault.read_text(f"users/{uid}/display_name.txt").strip() or uid
+                vault.hire(COMPANY, uid, label)
+        for p in PEOPLE:
+            vault.refresh_user_meta(p["user_id"])
+        _seed_tags(vault)
         return
 
     vault.write_text(f"companies/{COMPANY}/mission.txt", MISSION)
     vault.write_text(f"companies/{COMPANY}/products.md", _products_text())
-    vault.write_text(
-        f"companies/{COMPANY}/employees.txt",
-        "\n".join(p["user_id"] for p in PEOPLE) + "\n",
-    )
     vault.write_text(f"groups/{COMPANY}/capture/members.txt", "ken\njake\nmatt\ndev\n")
     vault.write_text(f"groups/{COMPANY}/capture/sbir.txt", "")
 
@@ -127,12 +146,11 @@ def seed_org(vault: Vault) -> None:
         uid = p["user_id"]
         vault.write_text(f"users/{uid}/display_name.txt", p["display_name"] + "\n")
         vault.write_text(f"users/{uid}/passwd", _passwd(uid, uid) + "\n")
-        vault.write_text(f"users/{uid}/companies.txt", COMPANY + "\n")
         vault.write_text(f"users/{uid}/skills.txt", "\n".join(p["skills"]) + "\n")
         if p["me"]:
             vault.write_text(f"users/{uid}/me.md", p["me"])
-        if not vault.exists(f"users/{uid}/sbir.txt"):
-            vault.write_text(f"users/{uid}/sbir.txt", "")
+        vault.hire(COMPANY, uid, p["display_name"])
+    _seed_tags(vault)
 
 
 def _products_text() -> str:

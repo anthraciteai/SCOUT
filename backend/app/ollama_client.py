@@ -83,13 +83,47 @@ async def status() -> dict:
         "base_url": settings.ollama_base_url,
         "configured_model": settings.ollama_model,
         "fallback_model": settings.ollama_fallback_model,
+        "embed_model": settings.ollama_embed_model,
         "available_models": available,
         "model_ready": any(
             m == settings.ollama_model
             or m.startswith(settings.ollama_model.split(":")[0] + ":")
             for m in available
         ),
+        "embed_ready": _has_name(available, settings.ollama_embed_model),
     }
+
+
+def _has_name(available: list[str], name: str) -> bool:
+    if not name:
+        return False
+    return any(m == name or m.startswith(name.split(":")[0] + ":") for m in available)
+
+
+async def embed(text: str, *, model: Optional[str] = None) -> Optional[list[float]]:
+    """Return a vector or None if no embed model is installed. Does not pull."""
+    mdl = model or settings.ollama_embed_model
+    if not mdl:
+        return None
+    available = await _list_models()
+    if not _has_name(available, mdl):
+        return None
+    payload = {"model": mdl, "prompt": (text or "")[:6000]}
+    try:
+        async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=60.0) as c:
+            r = await c.post("/api/embeddings", json=payload)
+            if r.status_code >= 400:
+                r = await c.post("/api/embed", json={"model": mdl, "input": payload["prompt"]})
+            r.raise_for_status()
+            data = r.json()
+            vec = data.get("embedding")
+            if not vec and isinstance(data.get("embeddings"), list) and data["embeddings"]:
+                vec = data["embeddings"][0]
+            if isinstance(vec, list) and vec and isinstance(vec[0], (int, float)):
+                return [float(x) for x in vec]
+    except Exception:
+        return None
+    return None
 
 
 async def chat(
@@ -101,13 +135,29 @@ async def chat(
     format_json: bool = False,
 ) -> str:
     """Non-streaming chat completion. Returns the assistant text."""
-    mdl = model or await resolve_model()
-    body = {
-        "model": mdl,
-        "messages": [
+    return await chat_messages(
+        [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
+        model=model,
+        temperature=temperature,
+        format_json=format_json,
+    )
+
+
+async def chat_messages(
+    messages: list[dict],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    format_json: bool = False,
+) -> str:
+    """Multi-turn chat. `messages` are Ollama {role, content} dicts."""
+    mdl = model or await resolve_model()
+    body: dict = {
+        "model": mdl,
+        "messages": messages,
         "stream": False,
         "options": {"temperature": temperature},
     }

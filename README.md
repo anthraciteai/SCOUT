@@ -3,7 +3,7 @@
 Anthracite AI's capture matcher: **drop your resume, qualified work comes to you.**
 
 SCOUT ranks open **DoD SBIR/STTR** topics against your profile, then lets you optionally run a
-**multi-agent LLM council** (Canari, Vien, Anthracite, Collier, Hewer, Flint, Davy) on the ones worth
+**multi-agent LLM council** (Canari, Vein, Anthracite, Collier, Hewer, Flint, Davy) on the ones worth
 a closer look. Pipeline, live proposal feedback, and debrief OCR stay local — **Ollama**
 (`llama3.2:3b`) and **Docling**.
 
@@ -35,19 +35,28 @@ re-run the LLM.
 
 ### Production overlay (Keycloak + SeaweedFS)
 
-Not needed to prove the product locally. Same layout as CANARI `architecture/auth-and-storage.md`:
+Not needed to prove the product locally:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-- File ACL: `companies/anthracite/employees.txt`
+- File ACL: `companies/anthracite/employees/{ken|jake|matt|dev}` (existence = employed)
+- Company tags: `companies/anthracite/tags.json` (not under an SBIR)
+- Resume tags: `users/{ken|jake|matt}/resume/tags.json` (+ `v/{sha}/` versions)
+- Topic tags: `sbirs/{id}/tags.json` (one extract per solicitation id)
 - Federated SBIRs: `groups/anthracite/capture/sbir.txt` + each user's `sbir.txt`
 - Group writing: `sbir/{id}/anthracite/shared/proposal.md`
 - Private work: `sbir/{id}/anthracite/users/{ken|jake|matt}/`
 - Keycloak: http://localhost:8081 (admin/admin) · passwords = usernames
 
-Details: [`architecture/auth-and-storage.md`](architecture/auth-and-storage.md)
+Details: [`architecture/auth-and-storage.md`](architecture/auth-and-storage.md).
+Workflow diagram: [`architecture/scout-data-workflow.png`](architecture/scout-data-workflow.png).
+Working-log (chat) diagram: [`architecture/agent-chat-log.png`](architecture/agent-chat-log.png).
+Group-desk overlap sequence: [`architecture/collab-overlap.png`](architecture/collab-overlap.png).
+Cross-suite architecture for agents lives in
+[`anthracite-docs`](https://github.com/anthraciteai/anthracite-docs)
+(`overview/scout-overview.md`, `architecture/scout.md`, `AGENTS.md`).
 
 - Frontend: http://localhost:8080
 - Backend API + docs: http://localhost:8000/docs
@@ -112,20 +121,22 @@ Do **not** start a second Ollama on :11434 — the snap already owns that port.
    card. Not automatic.
 4. **Browse** — catalog search if you already know a topic.
 5. **Pipeline** — move topics through the bid stages and record outcomes.
-6. **Proposals** — draft with **live LLM feedback**; **Full review** also uses the topic + debriefs.
+6. **Proposals** — draft with **live LLM feedback**; talk to **Flint / Hewer / …** in a
+   working log (license blocks get substituted; turns are recorded). **Full review** also
+   uses the topic + debriefs.
 7. **Debriefs** — upload government feedback for lost bids; OCR + LLM turn it into reusable lessons.
 
 ### The agents (council only)
 
 | Agent | Role | What it does |
 |-------|------|--------------|
-| **Canari** | Fit Scout / early-warning | Fast go/no-go signal + red flags & eligibility concerns |
-| **Vien** | Technical Analyst | Feasibility + how your skills map to the required work |
+| **Canari** | Canari the product | Does this SBIR map to Canari’s goals and objectives? |
+| **Vein** | Vein as a product | Does Vein map to the topic objectives, with work we can actually show? |
 | **Anthracite** | Business Developer | Customer need, competition, transition path, win probability |
 | **Collier** | Teaming & Staffing | Roles and partners to cover gaps |
 | **Hewer** | Lift & Adaptation | 0–10 effort to adapt what you already have |
-| **Flint** | Creative toolwright | Unexpected approaches using only tools on the **ME** resume |
-| **Davy** | Capture Strategist | Win themes, discriminators, TPOC questions, next actions |
+| **Flint** | Creative toolwright | Unexpected approaches using only tools on the **ME** resume; then a working log if you push back (license, missing kit) |
+| **Davy** | Davy — voice-activated C2 | Do Davy’s own voice-C2 capabilities meet this SBIR’s objectives? |
 | **Council** | Chair | Synthesizes a 0–100 fit score + GO / NO-GO recommendation |
 
 ---

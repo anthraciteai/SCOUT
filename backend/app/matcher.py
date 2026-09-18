@@ -12,8 +12,10 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from . import agents, dsip, ollama_client
+from . import agents, catalog, dsip, ollama_client
+from .identity import current_identity
 from .models import MatchScan, OpportunityMatch, Resume
+from .config import settings
 
 # Open + pre-release (same as topics.SCOPE_MAP["open"])
 _OPEN_CYCLES = ["openTopics"]
@@ -129,14 +131,22 @@ async def extract_profile(resume_text: str) -> dict[str, Any]:
             return fallback_profile(text)
         if not queries:
             queries = keywords[:4]
-        return {
+        profile = {
             "summary": str(data.get("summary") or "")[:800],
             "skills": skills,
             "domains": domains,
             "search_queries": queries,
             "keywords": keywords,
+            "phrases": _uniq(keywords + skills + domains, 40),
             "_source": "llm",
         }
+        try:
+            vec = await ollama_client.embed(catalog.embed_text(profile["phrases"], profile["summary"]))
+            if vec:
+                profile["_embedding"] = vec
+        except Exception:
+            pass
+        return profile
     except Exception:
         return fallback_profile(text)
 
@@ -202,6 +212,20 @@ async def ensure_profile(session: Session, resume: Resume, force: bool = False) 
     session.add(resume)
     session.commit()
     session.refresh(resume)
+    ident = current_identity()
+    phrases = {
+        "phrases": list(profile.get("phrases") or profile.get("keywords") or []),
+        "kinds": {},
+        "source": profile.get("_source") or "",
+    }
+    try:
+        if (resume.kind or "company") == "me" and ident:
+            catalog.write_resume_tags(ident.user_id, phrases, text, kind="me")
+        else:
+            cid = (ident.company_id if ident else None) or settings.default_company
+            catalog.write_company_tags(cid, phrases)
+    except Exception:
+        pass
     return profile
 
 
@@ -267,6 +291,44 @@ def score_topic(topic: dict[str, Any], profile: dict[str, Any]) -> tuple[float, 
         if len(reasons) >= 6:
             break
     return score, reasons
+
+
+def score_catalog_row(row, profile: dict[str, Any]) -> tuple[float, list[str], list[str]]:
+    """Blend keyword overlap, open-vocab phrase Jaccard, and optional cosine."""
+    try:
+        topic = json.loads(row.raw_json or "{}")
+    except json.JSONDecodeError:
+        topic = {}
+    kw_score, reasons = score_topic(topic, profile)
+    tags = catalog.parse_tags(row.tags_json)
+    phrases = [str(p) for p in (tags.get("phrases") or []) if p]
+    ident = current_identity()
+    side = catalog.load_side_phrases(
+        (ident.company_id if ident else None) or settings.default_company,
+        ident.user_id if ident else None,
+    )
+    prof = (
+        list(profile.get("phrases") or [])
+        + list(profile.get("keywords") or [])
+        + list(profile.get("skills") or [])
+        + list(profile.get("domains") or [])
+        + list(side)
+    )
+    shared = catalog.expand_phrases(prof) & catalog.expand_phrases(phrases)
+    jac = catalog.jaccard(catalog.expand_phrases(prof), catalog.expand_phrases(phrases))
+    tag_score = round(100.0 * jac, 1)
+    vec_t = catalog.parse_embedding(row.embedding_json)
+    vec_r = profile.get("_embedding") if isinstance(profile.get("_embedding"), list) else None
+    cos = catalog.cosine(vec_t, vec_r)
+    if cos is None:
+        score = 0.5 * kw_score + 0.5 * tag_score
+    else:
+        score = 0.4 * kw_score + 0.4 * tag_score + 0.2 * (cos * 100.0)
+        reasons.append(f"Embedding {cos:.2f}")
+    for p in list(shared)[:4]:
+        reasons.insert(0, f"Tag “{p}”")
+    score = max(0.0, min(100.0, round(score, 1)))
+    return score, reasons[:8], phrases
 
 
 def _topic_id(topic: dict[str, Any]) -> Optional[str]:
@@ -352,6 +414,7 @@ def persist_scan(
             score=item["score"],
             reasons_json=json.dumps(item["reasons"]),
             queries_json=json.dumps(item["queries"]),
+            tags_json=json.dumps(item.get("phrases") or []),
             raw_json=json.dumps(topic),
         )
         session.add(row)
@@ -381,6 +444,10 @@ def serialize_match(row: OpportunityMatch) -> dict[str, Any]:
         raw = json.loads(row.raw_json or "{}")
     except json.JSONDecodeError:
         raw = {}
+    try:
+        phrases = json.loads(row.tags_json or "[]")
+    except json.JSONDecodeError:
+        phrases = []
     return {
         "id": row.id,
         "topic_id": row.topic_id,
@@ -392,6 +459,7 @@ def serialize_match(row: OpportunityMatch) -> dict[str, Any]:
         "score": row.score,
         "reasons": reasons,
         "queries": queries,
+        "phrases": phrases if isinstance(phrases, list) else [],
         "topic": raw,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
@@ -406,47 +474,102 @@ async def run_scan(session: Session, resume: Resume, force_extract: bool = False
         model = profile.get("_source") or ""
 
     queries = list(profile.get("search_queries") or [])
-    found = await gather_candidates(queries)
-    if not found:
+    catalog_info: dict[str, Any] = {}
+    scored: list[dict[str, Any]] = []
+    # Inbox ranking must list the whole open window. LLM phrase enrich is a
+    # separate catalog pass — do not block Scan on 24 Ollama calls.
+    try:
+        catalog_info = await catalog.refresh_catalog(session, enrich_limit=0)
+    except Exception:
+        catalog_info = {"error": "catalog refresh failed; using live DSIP sample"}
+    rows = catalog.open_rows(session, catalog_info.get("open_ids") or [])
+    if rows:
+        if not profile.get("_embedding"):
+            try:
+                vec = await ollama_client.embed(
+                    catalog.embed_text(
+                        list(profile.get("phrases") or profile.get("keywords") or []),
+                        str(profile.get("summary") or ""),
+                    )
+                )
+                if vec:
+                    profile["_embedding"] = vec
+            except Exception:
+                pass
+        for row in rows:
+            score, reasons, phrases = score_catalog_row(row, profile)
+            try:
+                topic = json.loads(row.raw_json or "{}")
+            except json.JSONDecodeError:
+                topic = {}
+            if not topic:
+                topic = {
+                    "topicId": row.topic_id,
+                    "topicTitle": row.title,
+                    "topicCode": row.topic_code,
+                    "component": row.component,
+                    "program": row.program,
+                    "topicStatus": row.topic_status,
+                    "topicStartDate": row.open_ms,
+                    "topicEndDate": row.close_ms,
+                }
+            scored.append(
+                {
+                    "topic_id": row.topic_id,
+                    "topic": topic,
+                    "score": score,
+                    "reasons": reasons,
+                    "queries": queries[:4] or ["(catalog)"],
+                    "phrases": phrases,
+                }
+            )
+    else:
+        found = await gather_candidates(queries)
+        if not found:
+            raise RuntimeError(
+                "DSIP returned no topics for the profile queries. Check the DSIP proxy and try again."
+            )
+        for tid, bundle in found.items():
+            topic = bundle["topic"]
+            score, reasons = score_topic(topic, profile)
+            targeted = [q for q in bundle["queries"] if not str(q).startswith("(open")]
+            if targeted:
+                score = min(100.0, round(score + 8.0, 1))
+                reasons.append("Search: " + "; ".join(targeted[:2]))
+            scored.append(
+                {
+                    "topic_id": tid,
+                    "topic": topic,
+                    "score": score,
+                    "reasons": reasons[:8],
+                    "queries": bundle["queries"],
+                    "phrases": [],
+                }
+            )
+
+    if not scored:
         raise RuntimeError(
             "DSIP returned no topics for the profile queries. Check the DSIP proxy and try again."
         )
-    scored: list[dict[str, Any]] = []
-    for tid, bundle in found.items():
-        topic = bundle["topic"]
-        score, reasons = score_topic(topic, profile)
-        targeted = [q for q in bundle["queries"] if not str(q).startswith("(open")]
-        if targeted:
-            score = min(100.0, round(score + 8.0, 1))
-            reasons.append("Search: " + "; ".join(targeted[:2]))
-        elif reasons:
-            pass
-        scored.append(
-            {
-                "topic_id": tid,
-                "topic": topic,
-                "score": score,
-                "reasons": reasons[:8],
-                "queries": bundle["queries"],
-            }
-        )
-    scored.sort(key=lambda x: (-x["score"], x.get("topic_code") or ""))
-    # Keep anything with a real overlap signal, cap the inbox.
-    kept = [s for s in scored if s["score"] >= 15][:40]
-    if not kept:
-        kept = [s for s in scored if s["score"] > 0][:20]
+    scored.sort(key=lambda x: (-x["score"], str(x.get("topic_code") or "")))
+    # Anyone can bid anything — rank high to low, do not hide the long tail.
+    kept = scored
 
     scan = persist_scan(session, resume, profile, kept, model)
+    catalog_info["enrich_started"] = catalog.schedule_enrich_all()
+    catalog_info["enrich_running"] = catalog.enrich_running()
     rows = session.exec(
         select(OpportunityMatch)
         .where(OpportunityMatch.resume_id == resume.id)
         .order_by(OpportunityMatch.score.desc())
     ).all()
+    pub = {k: v for k, v in profile.items() if k != "_embedding"}
     return {
-        "profile": profile,
+        "profile": pub,
         "scanned_at": scan.created_at.isoformat(),
         "queries": json.loads(scan.queries_json or "[]"),
         "match_count": scan.match_count,
         "model": scan.model,
+        "catalog": {k: v for k, v in catalog_info.items() if k != "open_ids"},
         "matches": [serialize_match(r) for r in rows],
     }

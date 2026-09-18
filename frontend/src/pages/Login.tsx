@@ -28,7 +28,7 @@ export default function Login() {
     <div className="card" style={{ maxWidth: 560, margin: "40px auto" }}>
       <h1>Sign in to SCOUT</h1>
       <p className="subtitle">
-        Access is gated by <code>companies/&lt;id&gt;/employees.txt</code>. Ken, Jake, and Matt
+        Access is gated by <code>companies/&lt;id&gt;/employees/&lt;you&gt;</code> existing. Ken, Jake, and Matt
         share Anthracite — each keeps a private folder under{" "}
         <code>sbir/&#123;topic&#125;/anthracite/users/&#123;you&#125;</code>.
       </p>

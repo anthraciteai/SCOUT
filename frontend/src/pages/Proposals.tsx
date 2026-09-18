@@ -9,6 +9,7 @@ import {
 import type { Proposal, TeamRecommendation } from "../types";
 import TeamCard from "../components/TeamCard";
 import TopicPicker from "../components/TopicPicker";
+import ProposalAgents from "../components/ProposalAgents";
 import { useToast } from "../toast";
 
 export default function Proposals() {
@@ -152,8 +153,10 @@ export default function Proposals() {
     <div>
       <h1>Proposals</h1>
       <p className="subtitle">
-        Draft proposals and get live LLM feedback while you write. A full review also
-        pulls in the target topic and any uploaded debriefs.
+        Draft proposals and get live LLM feedback while you write. Talk to Flint (or any
+        agent) in the working log — if a spark is blocked by license, they substitute and
+        the turn is recorded. A full review also pulls in the target topic and any uploaded
+        debriefs.
       </p>
 
       <div className="row" style={{ alignItems: "flex-start", gap: 16 }}>
@@ -259,6 +262,8 @@ export default function Proposals() {
               {teamRec && <TeamCard rec={teamRec} />}
             </div>
           )}
+
+          {topicId && <ProposalAgents topicId={topicId} proposalText={content} />}
 
           {(feedback || streaming) && (
             <div className="card">

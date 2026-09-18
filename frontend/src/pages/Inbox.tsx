@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AnalysisApi, MatchesApi, OrgApi, ResumeApi, TrackerApi } from "../api";
+import { AnalysisApi, CatalogApi, MatchesApi, OrgApi, ResumeApi, TrackerApi } from "../api";
 import type { AnalysisRun, MatchInbox, MatchItem, ResumeInfo, SbirWorkspace } from "../types";
 import { useToast } from "../toast";
 import { topicMeta, statusClass, TopicDates } from "./Browse";
+import { confirmRerank } from "../matchRank";
 import { CouncilCard } from "./Analysis";
 import FlintCard, { type FlintResult } from "../components/FlintCard";
+import AgentChat from "../components/AgentChat";
 
 function scoreClass(n: number) {
   if (n >= 40) return "green";
@@ -35,6 +37,11 @@ export default function Inbox() {
   const [flintByTopic, setFlintByTopic] = useState<Record<string, FlintResult>>({});
   const [flintBusy, setFlintBusy] = useState<string | null>(null);
   const [vaultIndex, setVaultIndex] = useState<Record<string, SbirWorkspace>>({});
+  const [catalogStatus, setCatalogStatus] = useState<{
+    topics_cached?: number;
+    topics_enriched?: number;
+    enrich_running?: boolean;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const meFileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -48,7 +55,7 @@ export default function Inbox() {
       setInbox(data);
       if (autoScan && data.resume && !data.scanned_at && !autoScanStarted.current) {
         autoScanStarted.current = true;
-        await scan(false);
+        await scan(false, false);
         return;
       }
     } catch (e: any) {
@@ -65,10 +72,18 @@ export default function Inbox() {
     OrgApi.sbirs()
       .then((rows) => setVaultIndex(Object.fromEntries(rows.map((s) => [s.topic_id, s]))))
       .catch(() => {});
+    const tick = () =>
+      CatalogApi.status()
+        .then(setCatalogStatus)
+        .catch(() => {});
+    tick();
+    const id = window.setInterval(tick, 8000);
+    return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function scan(forceExtract: boolean) {
+  async function scan(forceExtract: boolean, warn = true) {
+    if (warn && !confirmRerank()) return;
     setScanning(true);
     setError("");
     try {
@@ -89,11 +104,8 @@ export default function Inbox() {
     try {
       await ResumeApi.upload(file, "ME", "me");
       if (fileRef.current) fileRef.current.value = "";
-      toast("This is you. Scanning open topics — Flint will use tools on that resume.");
+      toast("Saved as ME. Rankings stay cached until you re-rank.");
       ResumeApi.me().then(setMe).catch(() => {});
-      autoScanStarted.current = true;
-      setLoading(true);
-      await scan(true);
     } catch (e: any) {
       toast(e?.response?.data?.detail || e.message || "Upload failed", "error");
     } finally {
@@ -112,7 +124,7 @@ export default function Inbox() {
       topic_status: m.topic_status,
       raw: m.topic,
     });
-    toast(`Added ${m.topic_code || m.topic_id} to pipeline`);
+    toast(`Added ${m.topic_code || m.topic_id} to pipeline — Group desk is for that bid`);
   }
 
   async function uploadMe() {
@@ -300,7 +312,7 @@ export default function Inbox() {
           </div>
           <div className="row">
             <button className="ghost" onClick={() => scan(true)} disabled={scanning || deepRunning}>
-              {scanning ? "Scanning…" : "Scan again"}
+              {scanning ? "Re-ranking…" : "Re-rank from resume"}
             </button>
             <button
               className="ghost"
@@ -313,8 +325,24 @@ export default function Inbox() {
           </div>
         </div>
         <p className="meta" style={{ margin: "10px 0 0" }}>
-          Ranking is keyword overlap against open/pre-release DSIP topics. The agent council is
-          optional — use Deep-score or Council on a single card when you want a GO / NO-GO.
+          <strong>Scan</strong> ranks every open topic and writes{" "}
+          <code>sbirs/&lt;sbir_id&gt;/tags.json</code> for each. Phrase enrich then
+          walks the full window (objective + description via Ollama) — that takes a
+          while; existence of the file is the gate.
+          {catalogStatus && (
+            <>
+              {" "}
+              Tags: {catalogStatus.topics_enriched ?? 0}/{catalogStatus.topics_cached ?? 0}{" "}
+              enriched
+              {catalogStatus.enrich_running ? " · running…" : ""}.
+            </>
+          )}
+          {inbox?.catalog && (
+            <>
+              {" "}
+              Last index: {inbox.catalog.listed ?? "—"} listed.
+            </>
+          )}
         </p>
       </div>
 
@@ -343,7 +371,12 @@ export default function Inbox() {
                     <TopicDates t={t} />
                   </div>
                 )}
-                <div className="row" style={{ marginTop: 8, gap: 6 }}>
+                <div className="row" style={{ marginTop: 8, gap: 6, flexWrap: "wrap" }}>
+                  {(m.phrases || []).slice(0, 8).map((p) => (
+                    <span className="tag" key={p}>
+                      {p}
+                    </span>
+                  ))}
                   {m.reasons.slice(0, 4).map((r) => (
                     <span className="tag" key={r}>
                       {r}
@@ -415,6 +448,14 @@ export default function Inbox() {
                 style={{ marginTop: 10, background: "var(--panel-2)", borderColor: "#e6c07b" }}
               >
                 <FlintCard rec={flintByTopic[m.topic_id]} />
+                <div style={{ marginTop: 10 }}>
+                  <AgentChat
+                    topicId={m.topic_id}
+                    agent="Flint"
+                    topicsMeta={m.topic ? { [m.topic_id]: topicMeta(m.topic) } : undefined}
+                    compact
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -423,9 +464,9 @@ export default function Inbox() {
 
       {!scanning && matches.length === 0 && inbox?.scanned_at && (
         <div className="empty">
-          No overlapping open topics this scan. Try{" "}
+          No overlapping open topics in the cache. Try{" "}
           <button className="ghost small" onClick={() => scan(true)}>
-            Scan again
+            Re-rank from resume
           </button>{" "}
           or add more capability detail on <Link to="/profile">Profile</Link>.
         </div>

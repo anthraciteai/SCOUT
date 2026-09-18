@@ -1,32 +1,50 @@
-"""File-backed org vault: company employees, per-user SBIR work, cached council.
+"""File-backed org vault. Existence of a named key is the gate; payloads live at sha.
 
 Layout (S3 keys and disk paths are the same):
 
   companies/{company_id}/mission.txt
   companies/{company_id}/products.md
-  companies/{company_id}/employees.txt
+  companies/{company_id}/employees.txt          # derived roster (not the gate)
+  companies/{company_id}/employees/{user_id}    # GATE: employed. delete = quit
+  companies/{company_id}/tags.json
 
   users/{user_id}/display_name.txt
   users/{user_id}/passwd
-  users/{user_id}/me.md
-  users/{user_id}/skills.txt
-  users/{user_id}/sbir.txt
-  users/{user_id}/companies.txt
+  users/{user_id}/me.md                         # LLM resume blob
+  users/{user_id}/skills.txt                    # roster excerpt (org desk)
+  users/{user_id}/meta.json                     # {companies} — listing only
+  users/{user_id}/companies/{company_id}        # reverse index; auth still needs employees/{you}
+  users/{user_id}/sbir.txt                      # derived grant list
+  users/{user_id}/sbir/{topic_id}               # GATE: this person was granted the topic
+  users/{user_id}/resume/tags.json              # pointer {sha}
+  users/{user_id}/resume/current.json           # pointer {sha}
+  users/{user_id}/resume/v/{sha}/tags.json      # frozen matcher pack
+
+  sbirs/{topic_id}/tags.json                    # GATE: this solicitation was tagged
+  blobs/{sha}.json.gz                           # immutable council / agent runs
 
   groups/{company_id}/{group_id}/members.txt
   groups/{company_id}/{group_id}/sbir.txt
+  groups/{company_id}/{group_id}/sbir/{topic_id}
 
   sbir/{topic_id}/{company_id}/shared/topic.json
-  sbir/{topic_id}/{company_id}/shared/council.json
+  sbir/{topic_id}/{company_id}/shared/council.json          # pointer {sha}
   sbir/{topic_id}/{company_id}/shared/proposal.md
   sbir/{topic_id}/{company_id}/shared/notes.md
-  sbir/{topic_id}/{company_id}/users/{user_id}/flint.json
-  sbir/{topic_id}/{company_id}/users/{user_id}/council.json
+  sbir/{topic_id}/{company_id}/shared/approaches/{user_id}.json
+  sbir/{topic_id}/{company_id}/shared/collab.json
+  sbir/{topic_id}/{company_id}/users/{user_id}/meta.json    # desk flags + company_id
+  sbir/{topic_id}/{company_id}/users/{user_id}/flint.json   # GATE: Flint ran (pointer)
+  sbir/{topic_id}/{company_id}/users/{user_id}/council.json # GATE: council ran (pointer)
   sbir/{topic_id}/{company_id}/users/{user_id}/draft.md
+  sbir/{topic_id}/{company_id}/users/{user_id}/draft.exists # GATE: non-empty private draft
   sbir/{topic_id}/{company_id}/users/{user_id}/notes.md
+  sbir/{topic_id}/{company_id}/users/{user_id}/chat/{agent}.json
 """
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import os
 import re
@@ -105,8 +123,22 @@ class Vault:
     def write_text(self, key: str, text: str) -> None:
         self.write_bytes(key, (text or "").encode("utf-8"))
 
-    def write_json(self, key: str, obj: Any) -> None:
-        self.write_text(key, json.dumps(obj, indent=2, default=str))
+    def write_json(self, key: str, obj: Any, *, compact: bool = False) -> None:
+        if compact:
+            text = json.dumps(obj, separators=(",", ":"), ensure_ascii=False, default=str)
+        else:
+            text = json.dumps(obj, indent=2, default=str)
+        self.write_text(key, text)
+
+    def delete(self, key: str) -> None:
+        path = self._disk(key)
+        if os.path.isfile(path):
+            os.remove(path)
+        if self._s3:
+            try:
+                self._s3.delete(key)
+            except Exception:
+                pass
 
     def read_json(self, key: str) -> Optional[Any]:
         raw = self.read_text(key)
@@ -141,24 +173,119 @@ class Vault:
                     out.append(rel)
         return sorted(out)
 
-    # ---- org helpers -----------------------------------------------------
+    # ---- existence gates -------------------------------------------------
+
+    def employee_key(self, company_id: str, user_id: str) -> str:
+        return f"companies/{_ok(company_id)}/employees/{_ok(user_id)}"
+
+    def user_company_key(self, user_id: str, company_id: str) -> str:
+        return f"users/{_ok(user_id)}/companies/{_ok(company_id)}"
+
+    def user_meta_key(self, user_id: str) -> str:
+        return f"users/{_ok(user_id)}/meta.json"
+
+    def user_grant_key(self, user_id: str, topic_id: str) -> str:
+        return f"users/{_ok(user_id)}/sbir/{_ok(topic_id)}"
+
+    def group_grant_key(self, company_id: str, group_id: str, topic_id: str) -> str:
+        return f"groups/{_ok(company_id)}/{_ok(group_id)}/sbir/{_ok(topic_id)}"
+
+    def blob_key(self, sha: str) -> str:
+        return f"blobs/{_ok(sha)}.json.gz"
+
+    def work_meta_key(self, topic_id: str, company_id: str, user_id: str) -> str:
+        return f"sbir/{_ok(topic_id)}/{_ok(company_id)}/users/{_ok(user_id)}/meta.json"
+
+    def draft_gate_key(self, topic_id: str, company_id: str, user_id: str) -> str:
+        return f"sbir/{_ok(topic_id)}/{_ok(company_id)}/users/{_ok(user_id)}/draft.exists"
+
+    def hire(self, company_id: str, user_id: str, display_name: str = "") -> None:
+        """Create the employment gate. Login never does this."""
+        cid, uid = _ok(company_id), _ok(user_id)
+        self.write_text(self.employee_key(cid, uid), (display_name or uid) + "\n")
+        self.write_text(self.user_company_key(uid, cid), cid + "\n")
+        self._rewrite_employees_txt(cid)
+        self.refresh_user_meta(uid)
+
+    def unhire(self, company_id: str, user_id: str) -> None:
+        """Delete the employment gate. Reverse index and roster follow."""
+        cid, uid = _ok(company_id), _ok(user_id)
+        self.delete(self.employee_key(cid, uid))
+        self.delete(self.user_company_key(uid, cid))
+        self._rewrite_employees_txt(cid)
+        self.refresh_user_meta(uid)
+
+    def _rewrite_employees_txt(self, company_id: str) -> None:
+        people = self.company_employees(company_id)
+        self.write_text(
+            f"companies/{_ok(company_id)}/employees.txt",
+            ("\n".join(people) + "\n") if people else "",
+        )
+
+    def refresh_user_meta(self, user_id: str) -> dict[str, Any]:
+        uid = _ok(user_id)
+        companies = self.user_companies(uid)
+        body = {
+            "user_id": uid,
+            "companies": companies,
+            "company_id": companies[0] if companies else "",
+            "updated_at": _now(),
+        }
+        self.write_json(self.user_meta_key(uid), body, compact=True)
+        return body
 
     def company_employees(self, company_id: str) -> list[str]:
-        return self.lines(f"companies/{_ok(company_id)}/employees.txt")
+        """Roster from employees/{uid} files. employees.txt is not consulted."""
+        prefix = f"companies/{_ok(company_id)}/employees/"
+        found: list[str] = []
+        for key in self.list_prefix(prefix):
+            name = key[len(prefix) :].lstrip("/")
+            if name and "/" not in name:
+                found.append(name)
+        return sorted(found)
+
+    def user_companies(self, user_id: str) -> list[str]:
+        """Orgs this person claims, intersected with the employment gate."""
+        uid = _ok(user_id)
+        prefix = f"users/{uid}/companies/"
+        out: list[str] = []
+        for key in self.list_prefix(prefix):
+            cid = key[len(prefix) :].lstrip("/")
+            if cid and "/" not in cid and self.exists(self.employee_key(cid, uid)):
+                out.append(cid)
+        return out
 
     def in_company(self, ident: Identity, company_id: Optional[str] = None) -> bool:
         cid = _ok(company_id or ident.company_id)
-        if ident.user_id in self.company_employees(cid):
-            return True
-        return cid in self.lines(f"users/{_ok(ident.user_id)}/companies.txt")
+        return self.exists(self.employee_key(cid, ident.user_id))
 
     def user_sbirs(self, user_id: str) -> list[str]:
-        return self.lines(f"users/{_ok(user_id)}/sbir.txt")
+        uid = _ok(user_id)
+        prefix = f"users/{uid}/sbir/"
+        found: list[str] = []
+        for key in self.list_prefix(prefix):
+            name = key[len(prefix) :].lstrip("/")
+            if name and "/" not in name:
+                found.append(name)
+        if found:
+            return found
+        return self.lines(f"users/{uid}/sbir.txt")
 
     def group_sbirs(self, company_id: str, group_id: str) -> list[str]:
-        return self.lines(f"groups/{_ok(company_id)}/{_ok(group_id)}/sbir.txt")
+        cid, gid = _ok(company_id), _ok(group_id)
+        prefix = f"groups/{cid}/{gid}/sbir/"
+        found: list[str] = []
+        for key in self.list_prefix(prefix):
+            name = key[len(prefix) :].lstrip("/")
+            if name and "/" not in name:
+                found.append(name)
+        if found:
+            return found
+        return self.lines(f"groups/{cid}/{gid}/sbir.txt")
 
     def federated_sbirs(self, ident: Identity) -> list[str]:
+        if not self.in_company(ident, ident.company_id):
+            return []
         seen: list[str] = []
         for tid in self.user_sbirs(ident.user_id):
             if tid not in seen:
@@ -172,28 +299,28 @@ class Vault:
 
     def can_read_sbir(self, ident: Identity, topic_id: str, company_id: Optional[str] = None) -> bool:
         cid = company_id or ident.company_id
-        if not self.in_company(ident, cid):
-            return False
-        tid = _ok(topic_id)
-        if tid in self.federated_sbirs(ident):
-            return True
-        # Employee of the company that owns this folder may open it (then we grant).
-        return self.exists(f"sbir/{tid}/{_ok(cid)}/shared/topic.json") or self.in_company(ident, cid)
+        return self.in_company(ident, cid)
 
     def grant_sbir(self, ident: Identity, topic_id: str, meta: Optional[dict] = None) -> None:
+        if not self.in_company(ident, ident.company_id):
+            return
         tid = _ok(topic_id)
         cid = _ok(ident.company_id)
         uid = _ok(ident.user_id)
+        self.write_text(self.user_grant_key(uid, tid), tid + "\n")
         self.append_unique(f"users/{uid}/sbir.txt", tid)
         for g in ident.groups or ["capture"]:
-            self.append_unique(f"groups/{cid}/{_ok(g)}/members.txt", uid)
-            self.append_unique(f"groups/{cid}/{_ok(g)}/sbir.txt", tid)
+            gid = _ok(g)
+            self.append_unique(f"groups/{cid}/{gid}/members.txt", uid)
+            self.write_text(self.group_grant_key(cid, gid, tid), tid + "\n")
+            self.append_unique(f"groups/{cid}/{gid}/sbir.txt", tid)
         if meta:
             existing = self.read_json(f"sbir/{tid}/{cid}/shared/topic.json") or {}
             existing.update(meta)
             existing.setdefault("granted_by", uid)
             existing["updated_at"] = _now()
             self.write_json(f"sbir/{tid}/{cid}/shared/topic.json", existing)
+        self.refresh_work_meta(tid, cid, uid)
 
     def user_path(self, topic_id: str, ident: Identity, name: str) -> str:
         return f"sbir/{_ok(topic_id)}/{_ok(ident.company_id)}/users/{_ok(ident.user_id)}/{name}"
@@ -201,10 +328,100 @@ class Vault:
     def shared_path(self, topic_id: str, ident: Identity, name: str) -> str:
         return f"sbir/{_ok(topic_id)}/{_ok(ident.company_id)}/shared/{name}"
 
+    def approach_key(self, topic_id: str, company_id: str, user_id: str) -> str:
+        return (
+            f"sbir/{_ok(topic_id)}/{_ok(company_id)}/shared/approaches/{_ok(user_id)}.json"
+        )
+
+    def collab_key(self, topic_id: str, company_id: str) -> str:
+        return f"sbir/{_ok(topic_id)}/{_ok(company_id)}/shared/collab.json"
+
+    def company_tags_key(self, company_id: str) -> str:
+        return f"companies/{_ok(company_id)}/tags.json"
+
+    def resume_tags_key(self, user_id: str, sha: Optional[str] = None) -> str:
+        uid = _ok(user_id)
+        if sha:
+            return f"users/{uid}/resume/v/{_ok(sha)}/tags.json"
+        return f"users/{uid}/resume/tags.json"
+
+    def resume_current_key(self, user_id: str) -> str:
+        return f"users/{_ok(user_id)}/resume/current.json"
+
+    def topic_tags_key(self, topic_id: str) -> str:
+        """sbirs/{sbir_id}/tags.json — one pack per solicitation id, not under a company bid."""
+        return f"sbirs/{_ok(topic_id)}/tags.json"
+
+    def chat_path(self, topic_id: str, ident: Identity, agent: str) -> str:
+        return (
+            f"sbir/{_ok(topic_id)}/{_ok(ident.company_id)}/users/{_ok(ident.user_id)}"
+            f"/chat/{_ok(agent.lower())}.json"
+        )
+
+    def read_chat(self, topic_id: str, ident: Identity, agent: str) -> dict:
+        obj = self.read_json(self.chat_path(topic_id, ident, agent))
+        if isinstance(obj, dict) and isinstance(obj.get("messages"), list):
+            return obj
+        return {"agent": agent, "messages": []}
+
+    def write_chat(self, topic_id: str, ident: Identity, agent: str, log: dict) -> dict:
+        body = {
+            "agent": agent,
+            "updated_at": _now(),
+            "messages": log.get("messages") or [],
+        }
+        if log.get("model"):
+            body["model"] = log["model"]
+        self.write_json(self.chat_path(topic_id, ident, agent), body)
+        self.refresh_work_meta(topic_id, ident.company_id, ident.user_id)
+        return body
+
+    def list_chats(self, topic_id: str, ident: Identity) -> dict[str, int]:
+        meta = self.read_json(self.work_meta_key(topic_id, ident.company_id, ident.user_id)) or {}
+        chats = meta.get("chats")
+        if isinstance(chats, dict):
+            return {str(k): int(v) for k, v in chats.items()}
+        prefix = (
+            f"sbir/{_ok(topic_id)}/{_ok(ident.company_id)}/users/{_ok(ident.user_id)}/chat/"
+        )
+        out: dict[str, int] = {}
+        for key in self.list_prefix(prefix):
+            name = key.rsplit("/", 1)[-1]
+            if name.endswith(".json"):
+                out[name[: -len(".json")]] = 1
+        return out
+
+    def put_blob(self, obj: Any) -> str:
+        raw = json.dumps(obj, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
+        sha = hashlib.sha256(raw).hexdigest()[:16]
+        key = self.blob_key(sha)
+        if not self.exists(key):
+            self.write_bytes(key, gzip.compress(raw, compresslevel=6))
+        return sha
+
+    def get_blob(self, sha: str) -> Optional[Any]:
+        data = self.read_bytes(self.blob_key(sha))
+        if not data:
+            return None
+        if data[:2] == b"\x1f\x8b":
+            data = gzip.decompress(data)
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
     def cache_get(self, key: str, model: Optional[str] = None) -> Optional[Any]:
+        """Load a run. Missing slot file = never ran (do not invent a hit)."""
+        if not self.exists(key):
+            return None
         obj = self.read_json(key)
         if not obj:
             return None
+        if obj.get("sha") and "result" not in obj:
+            blob = self.get_blob(str(obj["sha"]))
+            if not isinstance(blob, dict):
+                return None
+            obj = {**obj, **blob}
         if model and obj.get("model") and obj.get("model") != model:
             return None
         return obj
@@ -216,7 +433,61 @@ class Vault:
             "cached_at": _now(),
             **payload,
         }
-        self.write_json(key, body)
+        sha = self.put_blob(body)
+        pointer = {
+            "sha": sha,
+            "model": model,
+            "kind": kind,
+            "cached_at": body["cached_at"],
+        }
+        self.write_json(key, pointer, compact=True)
+        parts = key.split("/")
+        if len(parts) >= 5 and parts[0] == "sbir" and parts[3] == "users":
+            self.refresh_work_meta(parts[1], parts[2], parts[4])
+        elif len(parts) >= 5 and parts[0] == "sbir" and parts[3] == "shared":
+            pass
+        return {**pointer, **body}
+
+    def set_draft_gate(self, topic_id: str, ident: Identity, text: str) -> None:
+        key = self.draft_gate_key(topic_id, ident.company_id, ident.user_id)
+        if (text or "").strip():
+            self.write_text(key, "")
+        else:
+            self.delete(key)
+        self.refresh_work_meta(topic_id, ident.company_id, ident.user_id)
+
+    def refresh_work_meta(self, topic_id: str, company_id: str, user_id: str) -> dict[str, Any]:
+        tid, cid, uid = _ok(topic_id), _ok(company_id), _ok(user_id)
+        prefix = f"sbir/{tid}/{cid}/users/{uid}/"
+        flint_key = prefix + "flint.json"
+        council_key = prefix + "council.json"
+        flint = self.read_json(flint_key) if self.exists(flint_key) else None
+        council = self.read_json(council_key) if self.exists(council_key) else None
+        chats: dict[str, int] = {}
+        for key in self.list_prefix(prefix + "chat/"):
+            name = key.rsplit("/", 1)[-1]
+            if not name.endswith(".json"):
+                continue
+            log = self.read_json(key) or {}
+            msgs = log.get("messages") if isinstance(log, dict) else None
+            chats[name[: -len(".json")]] = len(msgs) if isinstance(msgs, list) else 1
+        cached_at = ""
+        for slot in (council, flint):
+            if isinstance(slot, dict) and slot.get("cached_at"):
+                cached_at = str(slot["cached_at"])
+                break
+        body = {
+            "user_id": uid,
+            "company_id": cid,
+            "cached_at": cached_at,
+            "has_draft": self.exists(self.draft_gate_key(tid, cid, uid)),
+            "flint": self.exists(flint_key),
+            "council": self.exists(council_key),
+            "chat_turns": sum(chats.values()),
+            "chats": chats,
+            "updated_at": _now(),
+        }
+        self.write_json(self.work_meta_key(tid, cid, uid), body, compact=True)
         return body
 
     def bundle_resume(self, ident: Identity) -> str:
@@ -255,7 +526,7 @@ class Vault:
                     "user_id": uid,
                     "display_name": self.read_text(f"users/{_ok(uid)}/display_name.txt").strip() or uid,
                     "skills": self.lines(f"users/{_ok(uid)}/skills.txt"),
-                    "sbirs": self.lines(f"users/{_ok(uid)}/sbir.txt"),
+                    "sbirs": self.user_sbirs(uid),
                 }
             )
         return out
@@ -291,6 +562,12 @@ class _S3:
             return True
         except Exception:
             return False
+
+    def delete(self, key: str) -> None:
+        try:
+            self.client.delete_object(Bucket=self.bucket, Key=key)
+        except Exception:
+            pass
 
     def get(self, key: str) -> Optional[bytes]:
         try:

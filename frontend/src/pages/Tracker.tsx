@@ -128,9 +128,14 @@ export default function Tracker() {
             <Link to={`/topic/${r.topic_id}`} className="topic-title">
               {r.topic_code} — {r.title}
             </Link>
-            <button className="ghost small danger" onClick={() => remove(r.id)}>
-              remove
-            </button>
+            <div className="row">
+              <Link to={`/desk/${r.topic_id}`} className="meta">
+                group desk →
+              </Link>
+              <button className="ghost small danger" onClick={() => remove(r.id)}>
+                remove
+              </button>
+            </div>
           </div>
           <div className="meta" style={{ margin: "4px 0 10px" }}>
             {r.component} · {r.program} · {r.topic_status}

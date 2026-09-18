@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AnalysisApi, ProposalsApi, TopicsApi, TrackerApi } from "../api";
 import type { AnalysisRun, Topic, TrackedTopic } from "../types";
 import { topicCode, topicTitle, statusClass, topicMeta, TopicDates } from "./Browse";
 import { CouncilCard } from "./Analysis";
 import AgentStepper from "../components/AgentStepper";
-import OrgDesk from "../components/OrgDesk";
 import { useToast } from "../toast";
 import { sanitizeHtml, parseAnswer } from "../util/html";
 
@@ -201,6 +200,7 @@ export default function TopicDetail() {
               <button className="ghost" onClick={createLinkedProposal}>
                 Create linked proposal
               </button>
+              <Link to={`/desk/${id}`}>Open group desk →</Link>
             </div>
             <textarea
               style={{ marginTop: 10 }}
@@ -227,11 +227,7 @@ export default function TopicDetail() {
       )}
 
       <div style={{ marginBottom: 16 }}>
-        <OrgDesk topicId={id} title={topicTitle(topic)} topicCode={topicCode(topic)} />
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <AgentStepper topic={topic} />
+        <AgentStepper topic={topic} seed={run?.result?.agents} />
       </div>
 
       <div className="card">

@@ -158,17 +158,42 @@ export interface MatchItem {
   score: number;
   reasons: string[];
   queries: string[];
+  phrases?: string[];
   topic?: Topic;
   created_at?: string;
 }
 
+export interface CatalogPassInfo {
+  pages?: number;
+  listed?: number;
+  new_topics?: number;
+  reused?: number;
+  enriched?: number;
+  newest_open_ms?: number | null;
+  embed_model?: string;
+  created_at?: string;
+  open_count?: number;
+}
+
+export interface CatalogTopic {
+  topic_id: string;
+  phrases: string[];
+  kinds?: Record<string, string>;
+  source?: string;
+  dsip_keywords?: string;
+  has_embedding?: boolean;
+  enriched?: boolean;
+  indexed_at?: string;
+}
+
 export interface MatchInbox {
-  resume: { id: number; name: string; chars: number } | null;
+  resume: { id: number; name: string; chars: number; updated_at?: string | null } | null;
   profile: ResumeExtract | null;
   scanned_at: string | null;
   queries: string[];
   match_count: number;
   model: string;
+  catalog?: CatalogPassInfo | null;
   matches: MatchItem[];
 }
 
@@ -214,6 +239,24 @@ export interface AgentMeta {
   role: string;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant" | string;
+  speaker?: string;
+  text: string;
+  kind?: string;
+  at?: string;
+}
+
+export interface AgentChatLog {
+  agent: string;
+  role?: string;
+  path?: string;
+  messages: ChatMessage[];
+  model?: string;
+  updated_at?: string;
+  count?: number;
+}
+
 export interface ScoutUser {
   user_id: string;
   display_name: string;
@@ -250,16 +293,49 @@ export interface OrgCompany {
   sbirs: string[];
 }
 
+export interface ApproachCard {
+  user_id: string;
+  display_name?: string;
+  sha: string;
+  tools: string[];
+  sparks: string[];
+  sections: string[];
+  claims: string[];
+}
+
+export interface CollabOverlap {
+  theme: string;
+  who: string[];
+  score?: number;
+  tools?: string[];
+  split?: string;
+  sections?: string[];
+}
+
+export interface CollabReport {
+  fingerprint: string;
+  cards: ApproachCard[];
+  overlaps: CollabOverlap[];
+  gaps: string[];
+  promote: string[];
+  llm?: boolean;
+  cached?: boolean;
+  stale?: boolean;
+  proposal_sha?: string;
+}
+
 export interface SbirWorkspace {
   topic_id: string;
   title?: string;
   topic_code?: string;
   cached_council: boolean;
   cached_flint: boolean;
+  chat_turns?: number;
   has_shared_proposal: boolean;
   has_my_draft: boolean;
   writers: string[];
   cached_at?: string;
+  overlap_count?: number;
   shared_proposal?: string;
   shared_notes?: string;
   my_draft?: string;
@@ -267,6 +343,7 @@ export interface SbirWorkspace {
   my_council?: { result?: unknown; cached_at?: string; model?: string } | null;
   shared_council?: { result?: unknown; cached_at?: string; model?: string } | null;
   my_flint?: { result?: unknown; cached_at?: string; model?: string } | null;
+  my_chats?: Record<string, number>;
   teammates?: {
     user_id: string;
     display_name: string;
@@ -274,5 +351,6 @@ export interface SbirWorkspace {
     has_flint: boolean;
     has_draft: boolean;
   }[];
+  collab?: CollabReport;
   paths?: Record<string, string>;
 }
