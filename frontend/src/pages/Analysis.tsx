@@ -9,14 +9,14 @@ import FlintCard, { type FlintResult } from "../components/FlintCard";
 import { topicMeta } from "./Browse";
 
 const AGENT_COLORS: Record<string, string> = {
-  Canari: "#f0c419",
-  Vein: "#58a6ff",
-  Vien: "#58a6ff",
-  Anthracite: "#9aa4b2",
+  Canari: "#35d07f",
+  Vein: "#ff7a1a",
+  Vien: "#ff7a1a",
+  Anthracite: "#a3a9b4",
   Collier: "#c98b3a",
   Hewer: "#e0704f",
-  Flint: "#e6c07b",
-  Davy: "#3fb950",
+  Flint: "#ffc24b",
+  Davy: "#8a7bff",
 };
 
 function recClass(rec?: string) {

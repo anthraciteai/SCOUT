@@ -10,9 +10,10 @@ import {
   AGENTS,
   COLORS,
   CONTRIBUTES,
-  ORDER,
+  PRODUCT_VOICES,
   ROLES,
   SLICES,
+  TEAM_VOICES,
   type AgentName,
   type ContributeId,
   type SliceId,
@@ -20,6 +21,36 @@ import {
   productHeadings,
   stripHtml,
 } from "./agentWorkspace";
+
+function AgentPill({
+  name,
+  on,
+  has,
+  onClick,
+}: {
+  name: AgentName;
+  on: boolean;
+  has: boolean;
+  onClick: () => void;
+}) {
+  const color = COLORS[name];
+  const style: React.CSSProperties = on
+    ? {
+        background: color,
+        color: "#0a0b0d",
+        borderColor: color,
+        boxShadow: `0 8px 22px -12px ${color}`,
+      }
+    : has
+      ? { borderColor: color, color, background: `${color}12` }
+      : {};
+  return (
+    <button className={on ? "small" : "ghost small"} style={style} onClick={onClick}>
+      {name}
+      {has ? " ·" : ""}
+    </button>
+  );
+}
 
 function GenericResult({ data }: { data: AgentResult }) {
   if (data?.raw) return <pre className="stream">{String(data.raw)}</pre>;
@@ -215,43 +246,46 @@ export default function AgentStepper({
         </div>
 
         <div>
-          <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-            {ORDER.map((name) => {
-              const on = selected === name;
-              const has = Boolean(results[name]);
-              return (
-                <button
+          <div className="voice-group" style={{ marginBottom: 10 }}>
+            <div className="voice-group-label">Product voices · does this SBIR map?</div>
+            <div className="voice-row">
+              {PRODUCT_VOICES.map((name) => (
+                <AgentPill
                   key={name}
-                  className={on ? "small" : "ghost small"}
-                  style={
-                    on
-                      ? { background: COLORS[name], color: "#04121f" }
-                      : has
-                        ? { borderColor: COLORS[name], color: COLORS[name] }
-                        : undefined
-                  }
+                  name={name}
+                  on={selected === name}
+                  has={Boolean(results[name])}
                   onClick={() => {
                     setSelected(name);
                     setFocus(AGENTS[name].reads[0] || null);
                   }}
-                >
-                  {name}
-                  {has ? " ·" : ""}
-                </button>
-              );
-            })}
+                />
+              ))}
+            </div>
+            <div className="voice-group-label">Team voices · how would we bid it</div>
+            <div className="voice-row">
+              {TEAM_VOICES.map((name) => (
+                <AgentPill
+                  key={name}
+                  name={name}
+                  on={selected === name}
+                  has={Boolean(results[name])}
+                  onClick={() => {
+                    setSelected(name);
+                    setFocus(AGENTS[name].reads[0] || null);
+                  }}
+                />
+              ))}
+            </div>
           </div>
 
           <div
             className="card"
             style={{
-              background: "var(--panel-2)",
+              background: "var(--surface-2)",
               borderColor:
-                selected === "Flint"
-                  ? "#e6c07b"
-                  : selected === "Hewer" && lift != null
-                    ? liftColor(lift)
-                    : COLORS[selected],
+                selected === "Hewer" && lift != null ? liftColor(lift) : COLORS[selected],
+              boxShadow: `0 0 0 1px ${COLORS[selected]}22, 0 24px 60px -30px ${COLORS[selected]}55`,
             }}
           >
             <div className="row spread">

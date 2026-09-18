@@ -14,14 +14,17 @@ export const ROLES: Record<AgentName, string> = {
 };
 
 export const COLORS: Record<AgentName, string> = {
-  Canari: "#f0c419",
-  Vein: "#58a6ff",
-  Anthracite: "#9aa4b2",
+  Canari: "#35d07f", // green — matches anthracite-web
+  Vein: "#ff7a1a", // ember
+  Anthracite: "#a3a9b4",
   Collier: "#c98b3a",
   Hewer: "#e0704f",
-  Flint: "#e6c07b",
-  Davy: "#3fb950",
+  Flint: "#ffc24b",
+  Davy: "#8a7bff", // violet — matches anthracite-web
 };
+
+export const PRODUCT_VOICES: AgentName[] = ["Canari", "Vein", "Davy"];
+export const TEAM_VOICES: AgentName[] = ["Anthracite", "Collier", "Hewer", "Flint"];
 
 export type SliceId =
   | "component"

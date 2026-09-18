@@ -21,7 +21,7 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">SCOUT</div>
-      <div className="tagline">Drop your resume. Qualified work comes to you.</div>
+      <div className="tagline">Drop your resume. Qualified SBIR work comes to you.</div>
       <nav className="nav">
         <NavLink to="/" end className={link}>
           Inbox

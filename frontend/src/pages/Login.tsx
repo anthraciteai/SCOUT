@@ -25,11 +25,20 @@ export default function Login() {
   }
 
   return (
-    <div className="card" style={{ maxWidth: 560, margin: "40px auto" }}>
+    <div
+      className="card"
+      style={{
+        maxWidth: 520,
+        margin: "60px auto",
+        padding: 32,
+        background: "linear-gradient(180deg, var(--surface), var(--bg-2))",
+        boxShadow: "var(--shadow)",
+      }}
+    >
       <h1>Sign in to SCOUT</h1>
       <p className="subtitle">
-        Access is gated by <code>companies/&lt;id&gt;/employees/&lt;you&gt;</code> existing. Ken, Jake, and Matt
-        share Anthracite — each keeps a private folder under{" "}
+        Access is gated by <code>companies/&lt;id&gt;/employees/&lt;you&gt;</code> existing. Ken,
+        Jake, and Matt share Anthracite — each keeps a private folder under{" "}
         <code>sbir/&#123;topic&#125;/anthracite/users/&#123;you&#125;</code>.
       </p>
       {noPass && (
