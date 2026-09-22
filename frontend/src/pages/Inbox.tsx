@@ -4,14 +4,21 @@ import { AnalysisApi, CatalogApi, MatchesApi, OrgApi, ResumeApi, TrackerApi } fr
 import type { AnalysisRun, MatchInbox, MatchItem, ResumeInfo, SbirWorkspace } from "../types";
 import { useToast } from "../toast";
 import { topicMeta, statusClass, TopicDates } from "./Browse";
-import { confirmRerank } from "../matchRank";
 import { CouncilCard } from "./Analysis";
 import FlintCard, { type FlintResult } from "../components/FlintCard";
 import AgentChat from "../components/AgentChat";
+import MatchBreakdown, { bucketFor } from "../components/MatchBreakdown";
+import RerankDialog from "../components/RerankDialog";
+import WhyMatched from "../components/WhyMatched";
+import type { ScanBody } from "../api";
 
 function scoreClass(n: number) {
-  if (n >= 40) return "green";
-  if (n >= 20) return "yellow";
+  // Align the per-row score chip with the pie buckets so the eye can jump
+  // from the top-of-inbox pie right down to the rows and see the same colors.
+  const key = bucketFor(n).key;
+  if (key === "strong") return "green";
+  if (key === "good") return "green";
+  if (key === "ok") return "yellow";
   return "muted";
 }
 
@@ -40,8 +47,10 @@ export default function Inbox() {
   const [catalogStatus, setCatalogStatus] = useState<{
     topics_cached?: number;
     topics_enriched?: number;
+    topics_tagged?: number;
     enrich_running?: boolean;
   } | null>(null);
+  const [rerankOpen, setRerankOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const meFileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -83,17 +92,32 @@ export default function Inbox() {
   }, []);
 
   async function scan(forceExtract: boolean, warn = true) {
-    if (warn && !confirmRerank()) return;
+    // First-run auto-scan (warn=false) skips the dialog. All other rerank
+    // buttons open the picker so the user can choose ME vs coworker vs company.
+    if (warn) {
+      setRerankOpen(true);
+      return;
+    }
+    void runScan({ force_extract: forceExtract });
+  }
+
+  async function runScan(body: ScanBody) {
     setScanning(true);
     setError("");
     try {
-      const data = await MatchesApi.scan({ force_extract: forceExtract });
+      const data = await MatchesApi.scan(body);
       setInbox(data);
-      toast(`Ranked ${data.matches.length} open topic${data.matches.length === 1 ? "" : "s"}`);
+      const src = (data as any)?.profile?._source_breakdown?.source;
+      toast(
+        `Ranked ${data.matches.length} open topic${data.matches.length === 1 ? "" : "s"}${
+          src ? ` · source: ${src}` : ""
+        }`
+      );
     } catch (e: any) {
       setError(e?.response?.data?.detail || e.message || "Scan failed");
     } finally {
       setScanning(false);
+      setRerankOpen(false);
     }
   }
 
@@ -251,6 +275,12 @@ export default function Inbox() {
 
   return (
     <div>
+      <RerankDialog
+        open={rerankOpen}
+        onClose={() => setRerankOpen(false)}
+        onConfirm={(body) => runScan(body)}
+        running={scanning}
+      />
       <h1>Inbox</h1>
       <p className="subtitle">
         Topics ranked for <strong>{inbox?.resume?.name}</strong>
@@ -265,6 +295,8 @@ export default function Inbox() {
           {error}
         </div>
       )}
+
+      <MatchBreakdown matches={matches} />
 
       {!me && (
         <div className="card" style={{ borderColor: "#e6c07b" }}>
@@ -332,8 +364,9 @@ export default function Inbox() {
           {catalogStatus && (
             <>
               {" "}
-              Tags: {catalogStatus.topics_enriched ?? 0}/{catalogStatus.topics_cached ?? 0}{" "}
-              enriched
+              Tags: {catalogStatus.topics_enriched ?? 0}/{catalogStatus.topics_cached ?? 0} LLM ·{" "}
+              {catalogStatus.topics_tagged ?? 0} on-disk in{" "}
+              <code>sbirs/&lt;id&gt;/tags.json</code>
               {catalogStatus.enrich_running ? " · running…" : ""}.
             </>
           )}
@@ -343,6 +376,23 @@ export default function Inbox() {
               Last index: {inbox.catalog.listed ?? "—"} listed.
             </>
           )}
+          {catalogStatus &&
+            !catalogStatus.enrich_running &&
+            (catalogStatus.topics_enriched ?? 0) <
+              (catalogStatus.topics_cached ?? 0) && (
+              <>
+                {" "}
+                <button
+                  className="ghost small"
+                  onClick={async () => {
+                    await CatalogApi.enrichStart();
+                    toast("SBIR tag enrich kicked");
+                  }}
+                >
+                  Restart tag pass
+                </button>
+              </>
+            )}
         </p>
       </div>
 
@@ -351,17 +401,59 @@ export default function Inbox() {
       )}
       {deepProgress && <div className="card spinner">{deepProgress}</div>}
 
+      {inbox?.new_since && (inbox?.new_topic_ids?.length ?? 0) > 0 && (
+        <div className="meta" style={{ margin: "10px 2px 4px" }}>
+          <span
+            style={{
+              display: "inline-block",
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              background: "var(--red)",
+              marginRight: 6,
+              verticalAlign: "middle",
+            }}
+          />
+          {inbox.new_topic_ids?.length} new since{" "}
+          {new Date(inbox.new_since).toLocaleString(undefined, {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </div>
+      )}
+
       {matches.map((m) => {
         const prior = latestByTopic.get(m.topic_id);
         const t = m.topic;
         return (
-          <div className="card" key={m.topic_id}>
+          <div
+            className="card"
+            key={m.topic_id}
+            style={m.is_new ? { boxShadow: "inset 3px 0 0 var(--red)" } : undefined}
+          >
             <div className="row spread">
               <div className="grow">
-                <div className="row">
+                <div className="row" style={{ alignItems: "center", gap: 8 }}>
                   <Link to={`/topic/${m.topic_id}`} state={{ topic: t }} className="topic-title">
                     {m.topic_code} — {m.title}
                   </Link>
+                  {m.is_new && (
+                    <span
+                      className="pill red"
+                      title={
+                        inbox?.new_since
+                          ? `Wasn't in the top 50 of the ${new Date(
+                              inbox.new_since
+                            ).toLocaleString()} scan`
+                          : "New in this scan"
+                      }
+                    >
+                      NEW
+                    </span>
+                  )}
                 </div>
                 <div className="meta" style={{ marginTop: 4 }}>
                   {m.component} · {m.program}
@@ -442,6 +534,7 @@ export default function Inbox() {
                 Open topic →
               </Link>
             </div>
+            <WhyMatched topicId={m.topic_id} topicCode={m.topic_code} />
             {flintByTopic[m.topic_id] && (
               <div
                 className="card"

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ResumeApi, MatchesApi } from "../api";
+import { CatalogApi, MatchesApi, ResumeApi } from "../api";
+import type { MatchingSignal } from "../api";
 import type { ResumeInfo } from "../types";
 import { useToast } from "../toast";
 import { confirmRerank } from "../matchRank";
@@ -13,9 +14,20 @@ export default function Profile() {
   const [busy, setBusy] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [ranking, setRanking] = useState(false);
+  const [signal, setSignal] = useState<MatchingSignal | null>(null);
+  const [signalBusy, setSignalBusy] = useState(false);
   const meFile = useRef<HTMLInputElement>(null);
   const companyFile = useRef<HTMLInputElement>(null);
   const toast = useToast();
+
+  async function loadSignal() {
+    try {
+      const s = await CatalogApi.signal();
+      setSignal(s);
+    } catch {
+      /* signed-out shows an empty signal */
+    }
+  }
 
   async function loadAll() {
     const [rs, act, mine] = await Promise.all([
@@ -36,7 +48,23 @@ export default function Profile() {
 
   useEffect(() => {
     loadAll();
+    loadSignal();
   }, []);
+
+  async function refreshSignal() {
+    setSignalBusy(true);
+    try {
+      await CatalogApi.refreshSignal();
+      toast("Re-tagging in the background. Refreshing…");
+      // LLM upgrade lands after a moment; poll twice.
+      await loadSignal();
+      setTimeout(loadSignal, 4000);
+    } catch (e: any) {
+      toast(e?.response?.data?.detail || e.message || "Retag failed", "error");
+    } finally {
+      setSignalBusy(false);
+    }
+  }
 
   async function saveMe() {
     setBusy(true);
@@ -123,13 +151,82 @@ export default function Profile() {
   const extractData = (me || active)?.extract;
   const company = resumes.find((r) => r.kind !== "me");
 
+  const resumePhrases = signal?.resume?.phrases || [];
+  const companyPhrases = signal?.company?.phrases || [];
+
   return (
     <div>
       <h1>Profile</h1>
       <p className="subtitle">
         Upload a resume and mark it <strong>ME</strong>. Flint — the creative agent — will only
-        invent approaches from tools you actually have.
+        invent approaches from tools you actually have. Ranking blends your ME resume with your
+        company&apos;s mission and products.
       </p>
+
+      {signal?.identity && (
+        <div className="card">
+          <div className="row spread" style={{ marginBottom: 6 }}>
+            <div>
+              <h2 style={{ margin: 0 }}>Matching signal</h2>
+              <div className="meta">
+                <strong>{signal.identity.user_id}</strong> at{" "}
+                <strong>{signal.identity.company_id}</strong> — the ranker OR&apos;s your resume
+                phrases with your company product phrases so SBIRs you&apos;d actually bid rise to
+                the top.
+              </div>
+            </div>
+            <button className="ghost small" onClick={refreshSignal} disabled={signalBusy}>
+              {signalBusy ? "Re-tagging…" : "Re-tag from ME + company"}
+            </button>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
+              marginTop: 10,
+            }}
+          >
+            <div>
+              <div className="kv">You ({signal.identity.user_id})</div>
+              <div className="meta" style={{ margin: "2px 0 6px" }}>
+                {signal.resume?.chars || 0} chars ME · source {signal.resume?.source || "—"}
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                {resumePhrases.length ? (
+                  resumePhrases.map((p) => (
+                    <span key={p} className="tag">
+                      {p}
+                    </span>
+                  ))
+                ) : (
+                  <span className="meta">No resume tags yet — save ME below.</span>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="kv">{signal.identity.company_id} products</div>
+              <div className="meta" style={{ margin: "2px 0 6px" }}>
+                mission {signal.company?.mission_chars || 0} · products{" "}
+                {signal.company?.product_chars || 0} · source {signal.company?.source || "—"}
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                {companyPhrases.length ? (
+                  companyPhrases.map((p) => (
+                    <span key={p} className="pill vein" style={{ fontSize: 11 }}>
+                      {p}
+                    </span>
+                  ))
+                ) : (
+                  <span className="meta">
+                    No company tags yet — edit mission / products under Org.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ borderColor: "var(--accent)" }}>
         <h2 style={{ marginTop: 0 }}>This is ME</h2>

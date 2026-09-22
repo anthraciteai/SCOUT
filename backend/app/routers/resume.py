@@ -220,15 +220,19 @@ def _sync_vault(kind: str, name: str, text: str) -> None:
     if not ident or not (text or "").strip():
         return
     v = get_vault()
+    from .. import catalog
+
     if kind == "me":
         v.write_text(f"users/{ident.user_id}/me.md", text)
         if name:
             v.write_text(f"users/{ident.user_id}/display_name.txt", name.strip() + "\n")
-        from .. import catalog
-
-        catalog.refresh_resume_tags_from_text(ident.user_id, text, kind="me")
+        # User's matching pack is ME + their company's mission/products,
+        # not just the raw upload. Anthracite's product line becomes part
+        # of Keny's SBIR alignment automatically.
+        catalog.refresh_resume_tags_from_bundle(ident.user_id, ident.company_id)
     elif kind == "company":
         v.write_text(f"companies/{ident.company_id}/products.md", text)
-        from .. import catalog
-
         catalog.refresh_company_tags_from_vault(ident.company_id)
+        # Every employee's resume pack now inherits the new product terms.
+        for uid in v.company_employees(ident.company_id):
+            catalog.refresh_resume_tags_from_bundle(uid, ident.company_id)

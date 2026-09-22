@@ -1,10 +1,10 @@
 """Org desk + per-SBIR workspace. Cached council/Flint live in the vault."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from .. import catalog, collab
+from .. import catalog, collab, docling_service
 from ..identity import Identity, get_identity
 from ..vault import get_vault
 
@@ -20,6 +20,19 @@ class SkillsBody(BaseModel):
     skills: list[str] = []
     me: Optional[str] = None
     display_name: Optional[str] = None
+
+
+class EmployeeEditBody(BaseModel):
+    """Edit another employee. Any field left None is not touched.
+
+    Same-company members can edit each other's roster fields so a small crew
+    can keep the pack accurate without asking the founder to log in as each
+    person. Actual gate flips (hire/unhire) go through the POST/DELETE routes.
+    """
+
+    display_name: Optional[str] = None
+    skills: Optional[list[str]] = None
+    me: Optional[str] = None
 
 
 def _assert_company(ident: Identity, company_id: Optional[str] = None) -> str:
@@ -50,16 +63,22 @@ def company(ident: Identity = Depends(get_identity), company_id: Optional[str] =
 @router.put("/company/mission")
 def put_mission(body: TextBody, ident: Identity = Depends(get_identity)):
     cid = _assert_company(ident)
-    get_vault().write_text(f"companies/{cid}/mission.txt", body.text)
+    v = get_vault()
+    v.write_text(f"companies/{cid}/mission.txt", body.text)
     catalog.refresh_company_tags_from_vault(cid)
+    for uid in v.company_employees(cid):
+        catalog.refresh_resume_tags_from_bundle(uid, cid)
     return {"ok": True}
 
 
 @router.put("/company/products")
 def put_products(body: TextBody, ident: Identity = Depends(get_identity)):
     cid = _assert_company(ident)
-    get_vault().write_text(f"companies/{cid}/products.md", body.text)
+    v = get_vault()
+    v.write_text(f"companies/{cid}/products.md", body.text)
     catalog.refresh_company_tags_from_vault(cid)
+    for uid in v.company_employees(cid):
+        catalog.refresh_resume_tags_from_bundle(uid, cid)
     return {"ok": True}
 
 
@@ -73,21 +92,146 @@ def put_me(body: SkillsBody, ident: Identity = Depends(get_identity)):
         v.write_text(f"users/{uid}/me.md", body.me)
     if body.skills:
         v.write_text(f"users/{uid}/skills.txt", "\n".join(s.strip() for s in body.skills if s.strip()) + "\n")
-    me = v.read_text(f"users/{uid}/me.md")
-    skills = "\n".join(v.lines(f"users/{uid}/skills.txt"))
-    catalog.refresh_resume_tags_from_text(uid, f"{me}\n{skills}", kind="me")
     v.refresh_user_meta(uid)
+    catalog.refresh_resume_tags_from_bundle(uid, ident.company_id)
     return {"ok": True}
 
 
 @router.post("/company/employees/{user_id}")
-def hire_employee(user_id: str, ident: Identity = Depends(get_identity)):
+def hire_employee(
+    user_id: str,
+    body: Optional[EmployeeEditBody] = None,
+    ident: Identity = Depends(get_identity),
+):
+    """Hire (or re-hire) an employee. If a body is included, seed their
+    display name / skills / me in one shot so a fresh add is immediately
+    useful in matching."""
+    cid = _assert_company(ident)
+    uid = user_id.strip().lower()
+    if not uid:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    v = get_vault()
+    name = (
+        (body.display_name.strip() if body and body.display_name else "")
+        or v.read_text(f"users/{uid}/display_name.txt").strip()
+        or uid
+    )
+    v.hire(cid, uid, name)
+    if body:
+        if body.display_name is not None:
+            v.write_text(f"users/{uid}/display_name.txt", (body.display_name.strip() or uid) + "\n")
+        if body.skills is not None:
+            cleaned = [s.strip() for s in body.skills if s and s.strip()]
+            v.write_text(f"users/{uid}/skills.txt", ("\n".join(cleaned) + "\n") if cleaned else "")
+        if body.me is not None:
+            v.write_text(f"users/{uid}/me.md", body.me)
+    catalog.refresh_resume_tags_from_bundle(uid, cid)
+    return {"ok": True, "employees": v.company_employees(cid)}
+
+
+@router.put("/company/employees/{user_id}")
+def edit_employee(
+    user_id: str,
+    body: EmployeeEditBody,
+    ident: Identity = Depends(get_identity),
+):
+    """Edit a same-company employee's display_name / skills / me."""
     cid = _assert_company(ident)
     uid = user_id.strip().lower()
     v = get_vault()
-    name = v.read_text(f"users/{uid}/display_name.txt").strip() or uid
-    v.hire(cid, uid, name)
-    return {"ok": True, "employees": v.company_employees(cid)}
+    if not v.exists(v.employee_key(cid, uid)):
+        raise HTTPException(status_code=404, detail=f"{uid} is not in {cid}")
+    if body.display_name is not None:
+        v.write_text(f"users/{uid}/display_name.txt", (body.display_name.strip() or uid) + "\n")
+    if body.skills is not None:
+        cleaned = [s.strip() for s in body.skills if s and s.strip()]
+        v.write_text(f"users/{uid}/skills.txt", ("\n".join(cleaned) + "\n") if cleaned else "")
+    if body.me is not None:
+        v.write_text(f"users/{uid}/me.md", body.me)
+    v.refresh_user_meta(uid)
+    catalog.refresh_resume_tags_from_bundle(uid, cid)
+    return {
+        "ok": True,
+        "user_id": uid,
+        "display_name": v.read_text(f"users/{uid}/display_name.txt").strip() or uid,
+        "skills": v.lines(f"users/{uid}/skills.txt"),
+    }
+
+
+@router.get("/company/employees/{user_id}/resume")
+def get_employee_resume(user_id: str, ident: Identity = Depends(get_identity)):
+    """Peek at the resume the org has on file for this employee. Read-only."""
+    cid = _assert_company(ident)
+    uid = user_id.strip().lower()
+    v = get_vault()
+    if not v.exists(v.employee_key(cid, uid)):
+        raise HTTPException(status_code=404, detail=f"{uid} is not in {cid}")
+    text = v.read_text(f"users/{uid}/me.md")
+    meta = v.read_json(f"users/{uid}/resume/current.json") or {}
+    filename = v.read_text(f"users/{uid}/resume/filename.txt").strip()
+    return {
+        "user_id": uid,
+        "chars": len(text or ""),
+        "filename": filename or None,
+        "resume_sha": meta.get("sha"),
+        "updated_at": meta.get("updated_at"),
+        "text": text,
+    }
+
+
+@router.post("/company/employees/{user_id}/resume")
+async def upload_employee_resume(
+    user_id: str,
+    file: UploadFile = File(...),
+    ident: Identity = Depends(get_identity),
+):
+    """Attach (or replace) an employee's resume. Extracts text via Docling,
+    writes it to `users/{uid}/me.md` in the vault, then re-tags their pack
+    against the company mission/products so matching immediately reflects
+    the new toolbox."""
+    cid = _assert_company(ident)
+    uid = user_id.strip().lower()
+    v = get_vault()
+    if not v.exists(v.employee_key(cid, uid)):
+        raise HTTPException(status_code=404, detail=f"{uid} is not in {cid}")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    try:
+        text = docling_service.extract_text(file.filename or "resume", data)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Docling failed: {e}") from e
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="No text extracted from upload")
+    v.write_text(f"users/{uid}/me.md", text)
+    if file.filename:
+        v.write_text(f"users/{uid}/resume/filename.txt", file.filename.strip() + "\n")
+    v.refresh_user_meta(uid)
+    catalog.refresh_resume_tags_from_bundle(uid, cid)
+    meta = v.read_json(f"users/{uid}/resume/current.json") or {}
+    return {
+        "ok": True,
+        "user_id": uid,
+        "chars": len(text),
+        "filename": file.filename,
+        "resume_sha": meta.get("sha"),
+    }
+
+
+@router.delete("/company/employees/{user_id}/resume")
+def delete_employee_resume(user_id: str, ident: Identity = Depends(get_identity)):
+    """Blank out an employee's ME + tagged pack. The employment gate stays."""
+    cid = _assert_company(ident)
+    uid = user_id.strip().lower()
+    v = get_vault()
+    if not v.exists(v.employee_key(cid, uid)):
+        raise HTTPException(status_code=404, detail=f"{uid} is not in {cid}")
+    v.write_text(f"users/{uid}/me.md", "")
+    v.delete(f"users/{uid}/resume/filename.txt")
+    v.refresh_user_meta(uid)
+    catalog.refresh_resume_tags_from_bundle(uid, cid)
+    return {"ok": True, "user_id": uid}
 
 
 @router.delete("/company/employees/{user_id}")

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { AnalysisApi, TrackerApi } from "../api";
 import type { AnalysisRun, TrackedTopic } from "../types";
 import { liftColor, liftLabel } from "../components/HewerCard";
+import GanttChart from "../components/GanttChart";
 import { useToast } from "../toast";
 
 const OUTCOMES = ["", "pending", "awarded", "not_selected", "withdrawn"];
@@ -119,6 +120,8 @@ export default function Tracker() {
           <Link to="/browse">Browse</Link>.
         </div>
       )}
+
+      {rows.length > 0 && <GanttChart />}
 
       {rows.map((r) => {
         const v = verdicts[r.topic_id];

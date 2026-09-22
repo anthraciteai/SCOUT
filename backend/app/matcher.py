@@ -16,6 +16,7 @@ from . import agents, catalog, dsip, ollama_client
 from .identity import current_identity
 from .models import MatchScan, OpportunityMatch, Resume
 from .config import settings
+from .vault import get_vault
 
 # Open + pre-release (same as topics.SCOPE_MAP["open"])
 _OPEN_CYCLES = ["openTopics"]
@@ -195,18 +196,126 @@ def profile_is_stale(resume: Resume) -> bool:
     return False
 
 
-async def ensure_profile(session: Session, resume: Resume, force: bool = False) -> dict[str, Any]:
-    if not force and not profile_is_stale(resume):
+def _bundle_for(user_id: str, company_id: str) -> str:
+    """ME + mission + products for a specific (user, company). Same layout as
+    `Vault.bundle_resume` but without requiring the caller's identity."""
+    v = get_vault()
+    parts: list[str] = []
+    me = v.read_text(f"users/{user_id}/me.md").strip()
+    if me:
+        parts.append(f"=== ME (this person — tools, jobs, stack) ===\n{me}")
+    mission = v.read_text(f"companies/{company_id}/mission.txt").strip()
+    products = v.read_text(f"companies/{company_id}/products.md").strip()
+    company = "\n\n".join(p for p in (mission, products) if p)
+    if company:
+        parts.append(f"=== COMPANY / PRODUCTS ===\n{company}")
+    return "\n\n".join(parts)
+
+
+def _company_only_text(company_id: str) -> str:
+    v = get_vault()
+    mission = v.read_text(f"companies/{company_id}/mission.txt").strip()
+    products = v.read_text(f"companies/{company_id}/products.md").strip()
+    parts: list[str] = []
+    if mission:
+        parts.append(f"=== COMPANY MISSION ===\n{mission}")
+    if products:
+        parts.append(f"=== COMPANY / PRODUCTS ===\n{products}")
+    return "\n\n".join(parts)
+
+
+def _profile_source(
+    resume: Resume,
+    *,
+    mode: str = "me",
+    employee_id: Optional[str] = None,
+    include_company: bool = True,
+) -> tuple[str, str, dict[str, str]]:
+    """Return (llm_text, tag_text, breakdown).
+
+    Modes:
+      - "me"        : signed-in user's bundle (their ME + company).
+      - "employee"  : a specific coworker's bundle (their ME + company).
+      - "company"   : just the company pack, no personal ME.
+
+    `include_company=False` on "me" or "employee" trims to just the personal
+    ME text — useful for "rank me as-if I had no company", eg a solo bid.
+    """
+    ident = current_identity()
+    kind = (resume.kind or "company").lower()
+    raw = resume.text or ""
+    breakdown: dict[str, str] = {"kind": kind, "mode": mode, "include_company": include_company}
+    v = get_vault()
+
+    if mode == "company":
+        cid = (ident.company_id if ident else None) or settings.default_company
+        text = _company_only_text(cid)
+        if text:
+            breakdown["source"] = "company"
+            breakdown["company_id"] = cid
+            return text, text, breakdown
+        breakdown["source"] = "raw"
+        return raw, raw, breakdown
+
+    if mode == "employee" and employee_id:
+        uid = employee_id.strip().lower()
+        cid = (ident.company_id if ident else None) or settings.default_company
+        # Auth check — only same-company members can rank-as another employee.
+        if ident and not v.exists(v.employee_key(cid, uid)):
+            raise ValueError(f"{uid} is not in {cid}")
+        text = _bundle_for(uid, cid) if include_company else v.read_text(f"users/{uid}/me.md").strip()
+        if text:
+            breakdown["source"] = "employee_bundle" if include_company else "employee_me"
+            breakdown["company_id"] = cid
+            breakdown["user_id"] = uid
+            return text, text, breakdown
+        breakdown["source"] = "raw"
+        return raw, raw, breakdown
+
+    # Default: "me" — signed-in user's own bundle.
+    if ident and kind == "me":
+        try:
+            if include_company:
+                bundle = v.bundle_resume(ident).strip()
+            else:
+                bundle = v.read_text(f"users/{ident.user_id}/me.md").strip() or raw
+        except Exception:
+            bundle = ""
+        if bundle:
+            breakdown["source"] = "bundle" if include_company else "me_only"
+            breakdown["company_id"] = ident.company_id
+            breakdown["user_id"] = ident.user_id
+            return bundle, raw, breakdown
+    breakdown["source"] = "raw"
+    return raw, raw, breakdown
+
+
+async def ensure_profile(
+    session: Session,
+    resume: Resume,
+    force: bool = False,
+    *,
+    mode: str = "me",
+    employee_id: Optional[str] = None,
+    include_company: bool = True,
+) -> dict[str, Any]:
+    # Overrides ALWAYS force a re-extract because the cached profile came
+    # from a different source text.
+    override = mode != "me" or not include_company
+    if not force and not override and not profile_is_stale(resume):
         try:
             return json.loads(resume.extract_json or "{}")
         except json.JSONDecodeError:
             pass
-    text = resume.text or ""
+    llm_text, tag_text, breakdown = _profile_source(
+        resume, mode=mode, employee_id=employee_id, include_company=include_company,
+    )
     # Packs with explicit Scout queries skip the LLM so scheduled scans stay fast.
-    if canned_queries(text) and not force:
-        profile = overlay_canned(text, fallback_profile(text))
+    if canned_queries(llm_text) and not force:
+        profile = overlay_canned(llm_text, fallback_profile(llm_text))
     else:
-        profile = overlay_canned(text, await extract_profile(text))
+        profile = overlay_canned(llm_text, await extract_profile(llm_text))
+    profile["_source_breakdown"] = breakdown
     resume.extract_json = json.dumps(profile)
     resume.extracted_at = datetime.utcnow()
     session.add(resume)
@@ -220,7 +329,9 @@ async def ensure_profile(session: Session, resume: Resume, force: bool = False) 
     }
     try:
         if (resume.kind or "company") == "me" and ident:
-            catalog.write_resume_tags(ident.user_id, phrases, text, kind="me")
+            # Store the bundled tags under this user's resume version so
+            # score_catalog_row's side_phrases pick them up on every match.
+            catalog.write_resume_tags(ident.user_id, phrases, tag_text, kind="me")
         else:
             cid = (ident.company_id if ident else None) or settings.default_company
             catalog.write_company_tags(cid, phrases)
@@ -419,11 +530,13 @@ def persist_scan(
         )
         session.add(row)
 
+    top_ids = [item["topic_id"] for item in scored[:50] if item.get("topic_id")]
     scan = MatchScan(
         resume_id=resume.id,
         queries_json=json.dumps(profile.get("search_queries") or []),
         match_count=len(scored),
         model=model,
+        top_ids_json=json.dumps(top_ids),
     )
     session.add(scan)
     session.commit()
@@ -465,8 +578,23 @@ def serialize_match(row: OpportunityMatch) -> dict[str, Any]:
     }
 
 
-async def run_scan(session: Session, resume: Resume, force_extract: bool = False) -> dict[str, Any]:
-    profile = await ensure_profile(session, resume, force=force_extract)
+async def run_scan(
+    session: Session,
+    resume: Resume,
+    force_extract: bool = False,
+    *,
+    mode: str = "me",
+    employee_id: Optional[str] = None,
+    include_company: bool = True,
+) -> dict[str, Any]:
+    profile = await ensure_profile(
+        session,
+        resume,
+        force=force_extract,
+        mode=mode,
+        employee_id=employee_id,
+        include_company=include_company,
+    )
     model = ""
     try:
         model = await ollama_client.resolve_model()
@@ -551,6 +679,15 @@ async def run_scan(session: Session, resume: Resume, force_extract: bool = False
         raise RuntimeError(
             "DSIP returned no topics for the profile queries. Check the DSIP proxy and try again."
         )
+    # Within-scan rescale so the top match anchors to 100. The absolute score
+    # formula compresses hard once profiles grow past ~20 phrases (denominator
+    # dominates); rescaling keeps buckets (strong ≥75, good ≥60, ok ≥40)
+    # meaningful without breaking the ordering that Deep-score / rank rely on.
+    top_raw = max((x["score"] or 0.0) for x in scored)
+    if top_raw > 0:
+        for x in scored:
+            x["raw_score"] = x["score"]
+            x["score"] = round(100.0 * (x["score"] or 0.0) / top_raw, 1)
     scored.sort(key=lambda x: (-x["score"], str(x.get("topic_code") or "")))
     # Anyone can bid anything — rank high to low, do not hide the long tail.
     kept = scored

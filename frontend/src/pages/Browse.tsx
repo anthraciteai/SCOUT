@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
+import ComponentBreakdown from "../components/ComponentBreakdown";
+import RerankDialog from "../components/RerankDialog";
+import type { ScanBody } from "../api";
 import { Link, useNavigate } from "react-router-dom";
 import { MatchesApi, TopicsApi, TrackerApi } from "../api";
 import type { TopicScope } from "../api";
 import type { MatchInbox, MatchItem, Topic } from "../types";
 import { useSelection } from "../selection";
 import { useToast } from "../toast";
-import { confirmRerank, matchBadge, scoreClass } from "../matchRank";
+import { matchBadge, scoreClass } from "../matchRank";
 
 const PAGE_SIZE = 10;
 
@@ -81,6 +84,7 @@ export default function Browse() {
   const [error, setError] = useState("");
   const [inbox, setInbox] = useState<MatchInbox | null>(null);
   const [ranking, setRanking] = useState(false);
+  const [rerankOpen, setRerankOpen] = useState(false);
 
   const { toggle, isSelected, ids } = useSelection();
   const navigate = useNavigate();
@@ -124,16 +128,20 @@ export default function Browse() {
   }
 
   async function rerank() {
-    if (!confirmRerank()) return;
+    setRerankOpen(true);
+  }
+
+  async function runScan(body: ScanBody) {
     setRanking(true);
     try {
-      const data = await MatchesApi.scan({ force_extract: true });
+      const data = await MatchesApi.scan(body);
       setInbox(data);
       toast(`Cached ${data.matches.length} ranked topic${data.matches.length === 1 ? "" : "s"}`);
     } catch (e: any) {
       toast(e?.response?.data?.detail || e.message || "Re-rank failed", "error");
     } finally {
       setRanking(false);
+      setRerankOpen(false);
     }
   }
 
@@ -181,11 +189,19 @@ export default function Browse() {
 
   return (
     <div>
+      <RerankDialog
+        open={rerankOpen}
+        onClose={() => setRerankOpen(false)}
+        onConfirm={(body) => runScan(body)}
+        running={ranking}
+      />
       <h1>Browse</h1>
       <p className="subtitle">
         Strong matches come from the last ranking of your resume — they stay cached until you
         re-rank. Catalog search is still here if you already know a keyword.
       </p>
+
+      <ComponentBreakdown topics={data.length ? data : (inbox?.matches || []).map((m) => m.topic).filter(Boolean) as Topic[]} />
 
       <div className="card">
         <div className="row spread">

@@ -117,6 +117,29 @@ export const TrackerApi = {
 };
 
 // ---- Proposals ----
+export type ReviewPersona = "technical" | "military" | "researcher";
+
+export interface PersonaMeta {
+  key: ReviewPersona;
+  label: string;
+  blurb: string;
+}
+
+export interface ProposalReview {
+  id: number;
+  proposal_id: number;
+  persona: ReviewPersona;
+  persona_label: string;
+  title: string;
+  topic_id?: string;
+  topic_code?: string;
+  proposal_sha: string;
+  proposal_chars: number;
+  body: string;
+  model: string;
+  created_at: string;
+}
+
 export const ProposalsApi = {
   list: () => api.get<Proposal[]>("/proposals").then((r) => r.data),
   get: (id: number) => api.get<Proposal>(`/proposals/${id}`).then((r) => r.data),
@@ -125,7 +148,200 @@ export const ProposalsApi = {
   update: (id: number, body: Partial<Proposal>) =>
     api.put<Proposal>(`/proposals/${id}`, body).then((r) => r.data),
   remove: (id: number) => api.delete(`/proposals/${id}`).then((r) => r.data),
+  personas: () => api.get<PersonaMeta[]>("/proposals/personas").then((r) => r.data),
+  reviews: (proposalId: number, persona?: ReviewPersona) =>
+    api
+      .get<ProposalReview[]>(`/proposals/${proposalId}/reviews`, {
+        params: persona ? { persona } : {},
+      })
+      .then((r) => r.data),
+  deleteReview: (rid: number) =>
+    api.delete(`/proposals/reviews/${rid}`).then((r) => r.data),
+  reviewsSummary: () =>
+    api
+      .get<{
+        total: number;
+        by_persona: Record<string, number>;
+        by_proposal: Record<string, Record<string, number>>;
+      }>("/proposals/reviews/summary")
+      .then((r) => r.data),
+  // ---- task plan (Gantt) ----
+  tasks: (pid: number) =>
+    api.get<TaskPlanResponse>(`/proposals/${pid}/tasks`).then((r) => r.data),
+  taskHistory: (pid: number) =>
+    api
+      .get<TaskPlanSnapshot[]>(`/proposals/${pid}/tasks/history`)
+      .then((r) => r.data),
+  generateTasks: (pid: number) =>
+    api
+      .post<TaskPlanSnapshot>(`/proposals/${pid}/tasks/generate`)
+      .then((r) => r.data),
+  // ---- cost studio ----
+  cost: (pid: number) =>
+    api.get<CostState>(`/proposals/${pid}/cost`).then((r) => r.data),
+  putBom: (pid: number, bom: BomLine[]) =>
+    api.put<CostState>(`/proposals/${pid}/cost/bom`, { bom }).then((r) => r.data),
+  putRates: (pid: number, body: Partial<CostRates> & { phase?: CostPhase }) =>
+    api.put<CostState>(`/proposals/${pid}/cost/rates`, body).then((r) => r.data),
+  clearCostChat: (pid: number) =>
+    api.delete<CostState>(`/proposals/${pid}/cost/chat`).then((r) => r.data),
+  rollup: (pid: number) =>
+    api.post<CostRollup>(`/proposals/${pid}/cost/rollup`).then((r) => r.data),
 };
+
+// ---- Task-plan types ----
+export interface TaskPlanRequirement {
+  id: string;
+  text: string;
+}
+export interface TaskPlanPhase {
+  key: string;
+  label: string;
+  duration_weeks: number;
+}
+export interface TaskPlanTask {
+  id: string;
+  title: string;
+  phase: string;
+  start_week: number;
+  duration_weeks: number;
+  depends_on: string[];
+  deliverable?: string;
+  requirements?: string[];
+  owner_role?: string;
+}
+export interface TaskPlan {
+  phases: TaskPlanPhase[];
+  requirements: TaskPlanRequirement[];
+  tasks: TaskPlanTask[];
+  assumptions?: string;
+}
+export interface TaskPlanSnapshot {
+  id: number;
+  proposal_id: number;
+  proposal_sha: string;
+  proposal_chars: number;
+  plan: TaskPlan;
+  model: string;
+  created_at: string;
+}
+export interface TaskPlanResponse {
+  proposal_id: number;
+  current_chars: number;
+  min_chars: number;
+  ready: boolean;
+  current_sha: string;
+  snapshot: TaskPlanSnapshot | null;
+}
+
+// ---- Cost studio types ----
+export type CostPhase = "phase1" | "phase2" | "direct_to_phase2";
+export type BomCategory =
+  | "labor"
+  | "materials"
+  | "equipment"
+  | "travel"
+  | "subcontract"
+  | "odc";
+
+export interface BomLine {
+  id?: string;
+  category: BomCategory;
+  name: string;
+  qty: number;
+  unit: string;
+  unit_cost: number;
+  notes?: string;
+}
+
+export interface CostRates {
+  fringe_pct: number;
+  overhead_pct: number;
+  ga_pct: number;
+  fee_pct: number;
+}
+
+export interface CostChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface CostRollup {
+  phase: CostPhase;
+  phase_label: string;
+  phase_cap: number | null;
+  lines: (BomLine & { subtotal: number })[];
+  by_category: Record<BomCategory, number>;
+  labor: number;
+  fringe: number;
+  overhead: number;
+  direct_non_labor: number;
+  g_and_a: number;
+  fee: number;
+  total: number;
+  headroom: number | null;
+  warnings: string[];
+  narrative?: string;
+}
+
+export interface CostState {
+  proposal_id: number;
+  phase: CostPhase;
+  phase_label: string;
+  phase_cap: number | null;
+  bom: BomLine[];
+  rates: CostRates;
+  chat: CostChatTurn[];
+  rollup: CostRollup | null;
+  updated_at: string;
+}
+
+export async function streamDynomite(
+  proposalId: number,
+  message: string,
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(`${API_BASE}/proposals/${proposalId}/cost/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    const detail = await resp.text().catch(() => "");
+    throw new Error(detail || `Dynomite failed: ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk(decoder.decode(value, { stream: true }));
+  }
+}
+
+export async function streamPersonaReview(
+  proposalId: number,
+  persona: ReviewPersona,
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(
+    `${API_BASE}/proposals/${proposalId}/review/${persona}`,
+    { method: "POST", signal }
+  );
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Persona review failed: ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk(decoder.decode(value, { stream: true }));
+  }
+}
 
 // ---- Debriefs ----
 export const DebriefsApi = {
@@ -171,17 +387,119 @@ export const ResumeApi = {
 };
 
 // ---- Matches (inbox ranker) ----
+export type ScanMode = "me" | "employee" | "company";
+
+export interface ScanBody {
+  resume_id?: number;
+  force_extract?: boolean;
+  mode?: ScanMode;
+  employee_id?: string;
+  include_company?: boolean;
+}
+
+export interface RerankOption {
+  user_id: string;
+  display_name: string;
+  me_chars: number;
+  has_resume: boolean;
+}
+
+export interface RerankOptions {
+  identity: { user_id: string; company_id: string } | null;
+  company_id: string | null;
+  you: RerankOption | null;
+  coworkers: RerankOption[];
+  company: { mission_chars: number; product_chars: number };
+}
+
 export const MatchesApi = {
   list: (resume_id?: number) =>
     api.get<MatchInbox>("/matches", { params: { resume_id } }).then((r) => r.data),
-  scan: (opts?: { resume_id?: number; force_extract?: boolean }) =>
-    api
-      .post<MatchInbox>("/matches/scan", null, { params: opts || {} })
-      .then((r) => r.data),
+  scan: (body?: ScanBody) =>
+    api.post<MatchInbox>("/matches/scan", body || {}).then((r) => r.data),
+  rerankOptions: () =>
+    api.get<RerankOptions>("/matches/rerank/options").then((r) => r.data),
 };
+
+export async function streamWhyMatched(
+  topicId: string,
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(`${API_BASE}/matches/${encodeURIComponent(topicId)}/why`, {
+    method: "POST",
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    const detail = await resp.text().catch(() => "");
+    throw new Error(detail || `Why-matched failed: ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk(decoder.decode(value, { stream: true }));
+  }
+}
+
+// ---- Pipeline gantt ----
+export interface GanttReviewCheckpoint {
+  id: number;
+  persona: string;
+  created_at: string | null;
+  created_ms: number | null;
+  chars: number;
+}
+
+export interface GanttRow {
+  tracked_id: number;
+  topic_id: string;
+  topic_code?: string;
+  title?: string;
+  component?: string;
+  program?: string;
+  stage: string;
+  topic_status?: string;
+  outcome?: string;
+  prerelease_ms: number | null;
+  open_ms: number | null;
+  close_ms: number | null;
+  verdict: {
+    fit_score?: number;
+    recommendation?: string;
+    heavy_lift?: number;
+    at_ms?: number | null;
+  };
+  reviews: GanttReviewCheckpoint[];
+}
+
+export interface GanttData {
+  now_ms: number;
+  rows: GanttRow[];
+}
+
+export const GanttApi = {
+  load: () => api.get<GanttData>("/tracker/gantt").then((r) => r.data),
+};
+
+export interface MatchingSignal {
+  identity: { user_id: string; company_id: string } | null;
+  resume?: { chars: number; phrases: string[]; source?: string; updated_at?: string };
+  company?: {
+    mission_chars: number;
+    product_chars: number;
+    phrases: string[];
+    source?: string;
+    updated_at?: string;
+  };
+}
 
 export const CatalogApi = {
   status: () => api.get("/catalog/status").then((r) => r.data),
+  signal: () => api.get<MatchingSignal>("/catalog/signal").then((r) => r.data),
+  refreshSignal: () => api.post("/catalog/signal/refresh").then((r) => r.data),
+  enrichStart: () => api.post("/catalog/enrich/start").then((r) => r.data),
   refresh: (force = false) =>
     api.post("/catalog/refresh", {}, { params: { force } }).then((r) => r.data),
   topic: (topic_id: string) =>
@@ -211,6 +529,52 @@ export const OrgApi = {
   saveProducts: (text: string) => api.put("/org/company/products", { text }).then((r) => r.data),
   saveMe: (body: { me?: string; skills?: string[]; display_name?: string }) =>
     api.put("/org/me", body).then((r) => r.data),
+  hireEmployee: (
+    user_id: string,
+    body?: { display_name?: string; skills?: string[]; me?: string }
+  ) =>
+    api
+      .post(`/org/company/employees/${encodeURIComponent(user_id)}`, body || {})
+      .then((r) => r.data),
+  editEmployee: (
+    user_id: string,
+    body: { display_name?: string; skills?: string[]; me?: string }
+  ) =>
+    api
+      .put(`/org/company/employees/${encodeURIComponent(user_id)}`, body)
+      .then((r) => r.data),
+  unhireEmployee: (user_id: string) =>
+    api.delete(`/org/company/employees/${encodeURIComponent(user_id)}`).then((r) => r.data),
+  employeeResume: (user_id: string) =>
+    api
+      .get<{
+        user_id: string;
+        chars: number;
+        filename?: string | null;
+        resume_sha?: string;
+        updated_at?: string;
+        text: string;
+      }>(`/org/company/employees/${encodeURIComponent(user_id)}/resume`)
+      .then((r) => r.data),
+  uploadEmployeeResume: (user_id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api
+      .post<{
+        ok: boolean;
+        user_id: string;
+        chars: number;
+        filename?: string | null;
+        resume_sha?: string;
+      }>(`/org/company/employees/${encodeURIComponent(user_id)}/resume`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+      .then((r) => r.data);
+  },
+  deleteEmployeeResume: (user_id: string) =>
+    api
+      .delete(`/org/company/employees/${encodeURIComponent(user_id)}/resume`)
+      .then((r) => r.data),
   sbirs: () => api.get<{ sbirs: SbirWorkspace[] }>("/org/sbir").then((r) => r.data.sbirs),
   workspace: (topic_id: string) =>
     api.get<SbirWorkspace>(`/org/sbir/${topic_id}`).then((r) => r.data),

@@ -161,6 +161,8 @@ export interface MatchItem {
   phrases?: string[];
   topic?: Topic;
   created_at?: string;
+  /** true when this topic was NOT in the previous scan's top-50 (server-set). */
+  is_new?: boolean;
 }
 
 export interface CatalogPassInfo {
@@ -195,6 +197,10 @@ export interface MatchInbox {
   model: string;
   catalog?: CatalogPassInfo | null;
   matches: MatchItem[];
+  /** ISO timestamp of the previous scan we diffed against (null if first scan). */
+  new_since?: string | null;
+  /** topic_ids that showed up new in this scan compared to the previous one. */
+  new_topic_ids?: string[];
 }
 
 export interface RoleToAdd {

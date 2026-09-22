@@ -179,13 +179,28 @@ async def chat_stream(
     temperature: float = 0.4,
 ) -> AsyncGenerator[str, None]:
     """Streaming chat completion. Yields text chunks."""
-    mdl = model or await resolve_model()
-    body = {
-        "model": mdl,
-        "messages": [
+    async for chunk in chat_stream_messages(
+        [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
+        model=model,
+        temperature=temperature,
+    ):
+        yield chunk
+
+
+async def chat_stream_messages(
+    messages: list[dict],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.4,
+) -> AsyncGenerator[str, None]:
+    """Multi-turn streaming chat. Yields text chunks as Ollama emits them."""
+    mdl = model or await resolve_model()
+    body = {
+        "model": mdl,
+        "messages": messages,
         "stream": True,
         "options": {"temperature": temperature},
     }

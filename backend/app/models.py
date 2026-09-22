@@ -63,6 +63,59 @@ class Proposal(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class ProposalReview(SQLModel, table=True):
+    """Snapshot of a persona review of a proposal. One row per run so the user
+    can browse historical reviews (Technical / Military / Researcher lenses)
+    without them getting overwritten by later runs."""
+
+    __tablename__ = "proposal_review"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    proposal_id: int = Field(index=True)
+    persona: str = Field(index=True)  # "technical" | "military" | "researcher"
+    title: str = ""                    # snapshot of proposal title at review time
+    topic_id: Optional[str] = None
+    topic_code: Optional[str] = None
+    proposal_sha: str = ""             # sha of the reviewed content, so we can flag drift
+    proposal_chars: int = 0
+    body: str = ""                     # rendered review (markdown-ish)
+    model: str = ""
+    created_at: datetime = Field(default_factory=_now)
+
+
+class ProposalTaskPlan(SQLModel, table=True):
+    """LLM-extracted, bite-sized task plan derived from the current draft's
+    Functional Requirements + Technical Approach. Snapshot per generation so
+    users can watch the plan evolve as they write."""
+
+    __tablename__ = "proposal_task_plan"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    proposal_id: int = Field(index=True)
+    proposal_sha: str = ""       # hash of the reviewed draft
+    proposal_chars: int = 0
+    plan_json: str = "{}"        # {"phases": [...], "tasks": [...], "assumptions": "..."}
+    model: str = ""
+    created_at: datetime = Field(default_factory=_now)
+
+
+class ProposalCost(SQLModel, table=True):
+    """Per-proposal cost estimate state — the BOM that Dynomite builds
+    conversationally, plus the rate assumptions Budget Man rolls up with.
+    One row per proposal; upserted."""
+
+    __tablename__ = "proposal_cost"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    proposal_id: int = Field(index=True, unique=True)
+    phase: str = "phase1"                        # "phase1" | "phase2" | "direct_to_phase2"
+    bom_json: str = "[]"                         # ordered array of line items
+    rates_json: str = "{}"                       # fringe / overhead / g_and_a / fee percentages
+    chat_json: str = "[]"                        # Dynomite chat transcript (last N turns)
+    rollup_json: Optional[str] = None            # last Budget Man rollup (structured + narrative)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class Debrief(SQLModel, table=True):
     """Uploaded government feedback / debrief for a proposal that lost."""
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -145,6 +198,9 @@ class MatchScan(SQLModel, table=True):
     queries_json: str = "[]"
     match_count: int = 0
     model: str = ""
+    # Snapshot of the ranking so we can badge "NEW since <last scan>" without
+    # replaying scores. Stored as a JSON list of topic_ids (top-50, ordered).
+    top_ids_json: str = "[]"
     created_at: datetime = Field(default_factory=_now)
 
 

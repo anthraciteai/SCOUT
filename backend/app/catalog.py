@@ -328,32 +328,100 @@ def load_side_phrases(company_id: Optional[str] = None, user_id: Optional[str] =
     return out
 
 
+def _synth_topic(title: str, description: str) -> dict[str, Any]:
+    return {
+        "topicTitle": title,
+        "keywords": "",
+        "description": description,
+        "objective": description[:2500],
+        "component": title,
+    }
+
+
 def refresh_company_tags_from_vault(company_id: str) -> None:
+    """Write fallback tags immediately, then schedule an LLM upgrade.
+
+    Products/mission need real open-vocab phrases (`unmanned aviation`,
+    `TAK plugin`, `on-device inference`) for the matcher to lift SBIRs an
+    employee's raw resume doesn't literally mention.
+    """
     from .vault import get_vault
 
     v = get_vault()
     mission = v.read_text(f"companies/{company_id}/mission.txt")
     products = v.read_text(f"companies/{company_id}/products.md")
-    tags = fallback_phrases(
-        {
-            "topicTitle": company_id,
-            "keywords": "",
-            "description": f"{mission}\n{products}",
-            "component": company_id,
-        }
-    )
+    blob = f"{mission}\n{products}".strip()
+    tags = fallback_phrases(_synth_topic(company_id, blob))
     write_company_tags(company_id, tags)
+    _schedule_llm(_llm_company_tags(company_id, blob, mission, products))
 
 
 def refresh_resume_tags_from_text(user_id: str, text: str, kind: str = "me") -> None:
-    tags = fallback_phrases(
-        {
-            "topicTitle": user_id,
-            "keywords": "",
-            "description": text,
-        }
-    )
+    """Immediate fallback tags for the user's ME resume. LLM upgrade is scheduled."""
+    tags = fallback_phrases(_synth_topic(user_id, text))
     write_resume_tags(user_id, tags, text, kind=kind)
+    _schedule_llm(_llm_resume_tags(user_id, text, kind))
+
+
+def refresh_resume_tags_from_bundle(user_id: str, company_id: str) -> None:
+    """Merge ME + company mission/products so the resume tag pack reflects the role
+    the user actually plays at their company. Fallback first, LLM in background."""
+    from .vault import get_vault
+
+    v = get_vault()
+    me = v.read_text(f"users/{user_id}/me.md").strip()
+    mission = v.read_text(f"companies/{company_id}/mission.txt").strip()
+    products = v.read_text(f"companies/{company_id}/products.md").strip()
+    blob = "\n\n".join(x for x in (me, mission, products) if x)
+    if not blob:
+        return
+    tags = fallback_phrases(_synth_topic(user_id, blob))
+    write_resume_tags(user_id, tags, blob, kind="me")
+    _schedule_llm(_llm_resume_tags(user_id, blob, "me"))
+
+
+async def _llm_company_tags(
+    company_id: str, blob: str, mission: str, products: str
+) -> None:
+    if not blob:
+        return
+    try:
+        tags = await extract_phrases(_synth_topic(company_id, blob))
+    except Exception:
+        return
+    if not tags.get("phrases"):
+        return
+    tags.setdefault("source", "llm")
+    tags["mission_chars"] = len(mission or "")
+    tags["product_chars"] = len(products or "")
+    write_company_tags(company_id, tags)
+
+
+async def _llm_resume_tags(user_id: str, blob: str, kind: str) -> None:
+    if not blob:
+        return
+    try:
+        tags = await extract_phrases(_synth_topic(user_id, blob))
+    except Exception:
+        return
+    if not tags.get("phrases"):
+        return
+    tags.setdefault("source", "llm")
+    write_resume_tags(user_id, tags, blob, kind=kind)
+
+
+def _schedule_llm(coro) -> None:
+    """Fire-and-forget an async LLM upgrade. Silently drops if no loop is running."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop (called from a sync endpoint outside FastAPI). Just close it.
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return
+    loop.create_task(coro)
 
 
 def _topic_id(topic: dict[str, Any]) -> Optional[str]:

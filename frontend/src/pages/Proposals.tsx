@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   ProposalsApi,
@@ -10,6 +10,10 @@ import type { Proposal, TeamRecommendation } from "../types";
 import TeamCard from "../components/TeamCard";
 import TopicPicker from "../components/TopicPicker";
 import ProposalAgents from "../components/ProposalAgents";
+import PastReviews from "../components/PastReviews";
+import ProposalStatusChart from "../components/ProposalStatusChart";
+import TaskGantt from "../components/TaskGantt";
+import CostStudio from "../components/CostStudio";
 import { useToast } from "../toast";
 
 export default function Proposals() {
@@ -25,6 +29,7 @@ export default function Proposals() {
   const [focus, setFocus] = useState("");
   const [teamRec, setTeamRec] = useState<TeamRecommendation | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
+  const [reviewCounts, setReviewCounts] = useState<Record<number, number>>({});
   const abortRef = useRef<AbortController | null>(null);
   const toast = useToast();
   const location = useLocation();
@@ -34,14 +39,40 @@ export default function Proposals() {
     setList(rows);
     return rows;
   }
+
+  async function loadReviewCounts() {
+    try {
+      const summary = await ProposalsApi.reviewsSummary();
+      const flat: Record<number, number> = {};
+      for (const [pid, byPersona] of Object.entries(summary.by_proposal || {})) {
+        flat[Number(pid)] = Object.values(byPersona || {}).reduce(
+          (s, n) => s + (n || 0),
+          0
+        );
+      }
+      setReviewCounts(flat);
+    } catch {
+      /* first-load harmless failure */
+    }
+  }
+
   useEffect(() => {
     (async () => {
       const rows = await load();
+      loadReviewCounts();
       // Auto-open a proposal if navigated here from "Create linked proposal".
       const openId = (location.state as { openProposalId?: number } | null)?.openProposalId;
       if (openId) {
         const p = rows.find((r) => r.id === openId);
-        if (p) edit(p);
+        if (p) {
+          edit(p);
+          return;
+        }
+      }
+      // Nothing explicitly requested — auto-open the most recently-edited
+      // proposal so the past-reviews panel is visible on first load.
+      if (rows.length) {
+        edit(rows[0]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,15 +180,26 @@ export default function Proposals() {
     }
   }
 
+  const contentSha = useMemo(() => {
+    // Cheap client-side hash so old reviews can be flagged as "drifted".
+    // Not cryptographic — just needs to change when the text does.
+    let h = 5381;
+    for (let i = 0; i < content.length; i++) {
+      h = ((h << 5) + h + content.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(16).padStart(8, "0");
+  }, [content]);
+
   return (
     <div>
       <h1>Proposals</h1>
       <p className="subtitle">
-        Draft proposals and get live LLM feedback while you write. Talk to Flint (or any
-        agent) in the working log — if a spark is blocked by license, they substitute and
-        the turn is recorded. A full review also pulls in the target topic and any uploaded
-        debriefs.
+        Draft proposals and get live LLM feedback while you write. Every persona review
+        (Technical, Military, Researcher) is snapshotted so you can browse past reads and
+        watch how the proposal improves.
       </p>
+
+      <ProposalStatusChart proposals={list} reviewCounts={reviewCounts} />
 
       <div className="row" style={{ alignItems: "flex-start", gap: 16 }}>
         {/* List */}
@@ -261,6 +303,26 @@ export default function Proposals() {
               </h3>
               {teamRec && <TeamCard rec={teamRec} />}
             </div>
+          )}
+
+          {current && (
+            <TaskGantt
+              proposalId={current.id}
+              proposalChars={content.length}
+              proposalSha={contentSha}
+            />
+          )}
+
+          {current && (
+            <CostStudio proposalId={current.id} proposalTitle={title} />
+          )}
+
+          {current && (
+            <PastReviews
+              proposalId={current.id}
+              currentSha={contentSha}
+              proposalChars={content.length}
+            />
           )}
 
           {topicId && <ProposalAgents topicId={topicId} proposalText={content} />}
