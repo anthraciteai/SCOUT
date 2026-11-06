@@ -1,4 +1,6 @@
 import type { AgentResult } from "../types";
+import { asText, asList, COLORS } from "./agentWorkspace";
+import ErrorBoundary from "./ErrorBoundary";
 
 export type FlintSpark = {
   title?: string;
@@ -24,109 +26,108 @@ export type FlintResult = AgentResult & {
   do_not_fake?: string[];
 };
 
-/** Coerce any model value into a safe React child. The LLM sometimes returns
- *  an object (e.g. {tool, role_in_this_bid}) where a string is expected, which
- *  otherwise crashes the render with React error #31. */
-function asText(v: unknown): string {
-  if (v == null) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    const name = o.tool ?? o.name ?? o.title ?? o.text;
-    if (typeof name === "string" && name.trim()) {
-      const role = o.role_in_this_bid;
-      return typeof role === "string" && role.trim() && role !== name
-        ? `${name} → ${role}`
-        : name;
-    }
-    try {
-      return JSON.stringify(v);
-    } catch {
-      return String(v);
-    }
-  }
-  return String(v);
-}
+const GOLD = COLORS.Flint;
 
-export default function FlintCard({ rec }: { rec: FlintResult }) {
+function FlintCardInner({ rec }: { rec: FlintResult }) {
   const sparks = Array.isArray(rec.sparks) ? rec.sparks : [];
   const tools = Array.isArray(rec.tools_in_play) ? rec.tools_in_play : [];
-  const fake = Array.isArray(rec.do_not_fake) ? rec.do_not_fake : [];
+  const fake = asList(rec.do_not_fake);
+
   return (
-    <div>
-      <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-        <strong>Flint</strong>
-        <span className="meta">· creative toolwright — only your real stack</span>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <span className="h-2.5 w-2.5 rounded-full" style={{ background: GOLD, boxShadow: `0 0 8px ${GOLD}` }} />
+        <strong className="text-[15px]">Flint</strong>
+        <span className="text-[12px] text-faint">· creative toolwright — only your real stack</span>
       </div>
+
       {rec.persona_read && (
-        <p style={{ fontSize: 14, lineHeight: 1.55, marginTop: 0 }}>{asText(rec.persona_read)}</p>
+        <p className="m-0 text-[14px] leading-relaxed text-ink">{asText(rec.persona_read)}</p>
       )}
+
       {tools.length > 0 && (
-        <>
-          <div className="kv">Tools in play</div>
-          <div className="row" style={{ gap: 6, marginBottom: 10 }}>
+        <div>
+          <div className="mb-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em] text-faint">
+            Tools in play
+          </div>
+          <div className="flex flex-wrap gap-1.5">
             {tools.map((t, i) => (
-              <span className="tag" key={i} title={t.from_resume || t.role_in_this_bid}>
-                {asText(t.tool)}
-                {t.role_in_this_bid ? ` → ${t.role_in_this_bid}` : ""}
+              <span
+                key={i}
+                className="inline-flex items-center rounded-full border border-hairstrong bg-surface2 px-2.5 py-1 text-[12px] text-muted"
+                title={t.from_resume || t.role_in_this_bid}
+              >
+                <span className="font-medium text-ink">{asText(t.tool)}</span>
+                {t.role_in_this_bid ? <span className="text-faint">&nbsp;→ {asText(t.role_in_this_bid)}</span> : null}
               </span>
             ))}
           </div>
-        </>
+        </div>
       )}
+
       {sparks.map((s, i) => (
-        <div
-          key={i}
-          className="card"
-          style={{ background: "var(--panel)", marginBottom: 8, padding: 12 }}
-        >
-          <div className="row spread">
-            <strong style={{ fontSize: 14 }}>{asText(s.title) || `Spark ${i + 1}`}</strong>
-            <span className="meta">
+        <div key={i} className="rounded-xl border border-hair bg-surface2/60 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <strong className="text-[14px] text-ink">{asText(s.title) || `Spark ${i + 1}`}</strong>
+            <span className="shrink-0 text-[11px] text-faint">
               orig {s.originality ?? "—"} · feas {s.feasibility ?? "—"}
             </span>
           </div>
-          {s.hook && <p style={{ fontSize: 13, margin: "6px 0" }}>{asText(s.hook)}</p>}
-          {Array.isArray(s.how) && s.how.length > 0 && (
-            <ul className="tight">
-              {s.how.map((h, j) => (
-                <li key={j}>{asText(h)}</li>
+          {s.hook && <p className="my-1.5 text-[13px] leading-relaxed text-muted">{asText(s.hook)}</p>}
+          {asList(s.how).length > 0 && (
+            <ul className="my-1 list-disc space-y-0.5 pl-4 text-[13px]">
+              {asList(s.how).map((h, j) => (
+                <li key={j}>{h}</li>
               ))}
             </ul>
           )}
           {s.why_only_you && (
-            <div className="meta" style={{ marginTop: 4 }}>
-              Why only you: {asText(s.why_only_you)}
-            </div>
+            <div className="mt-1 text-[12px] text-faint">Why only you: {asText(s.why_only_you)}</div>
           )}
-          {Array.isArray(s.tools) && s.tools.length > 0 && (
-            <div className="row" style={{ gap: 6, marginTop: 6 }}>
-              {s.tools.map((t, j) => (
-                <span className="tag" key={j}>
-                  {asText(t)}
+          {asList(s.tools).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {asList(s.tools).map((t, j) => (
+                <span
+                  key={j}
+                  className="inline-flex items-center rounded-full border border-hairstrong px-2 py-0.5 text-[11.5px] text-muted"
+                >
+                  {t}
                 </span>
               ))}
             </div>
           )}
         </div>
       ))}
+
       {rec.left_field && (
-        <div className="card" style={{ borderColor: "var(--accent)", padding: 12 }}>
-          <div className="kv">Left field</div>
-          <div style={{ fontSize: 13 }}>{asText(rec.left_field)}</div>
+        <div className="rounded-xl border p-3" style={{ borderColor: `${GOLD}66`, background: `${GOLD}10` }}>
+          <div className="mb-1 text-[10.5px] font-bold uppercase tracking-[0.12em]" style={{ color: GOLD }}>
+            Left field
+          </div>
+          <div className="text-[13px] leading-relaxed">{asText(rec.left_field)}</div>
         </div>
       )}
+
       {fake.length > 0 && (
-        <>
-          <div className="kv">Do not fake</div>
-          <ul className="tight">
+        <div>
+          <div className="mb-1 text-[10.5px] font-bold uppercase tracking-[0.12em] text-faint">
+            Do not fake
+          </div>
+          <ul className="list-disc space-y-0.5 pl-4 text-[13px] text-muted">
             {fake.map((x, i) => (
-              <li key={i}>{asText(x)}</li>
+              <li key={i}>{x}</li>
             ))}
           </ul>
-        </>
+        </div>
       )}
     </div>
+  );
+}
+
+export default function FlintCard({ rec }: { rec: FlintResult }) {
+  return (
+    <ErrorBoundary label="Flint’s sparks" resetKey={rec}>
+      <FlintCardInner rec={rec} />
+    </ErrorBoundary>
   );
 }

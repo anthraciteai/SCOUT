@@ -134,3 +134,40 @@ export function stripHtml(s?: string): string {
   if (!s) return "";
   return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
+
+/**
+ * Coerce ANY value a local model might emit into a safe React child string.
+ * The LLM frequently returns an object where a string is expected (e.g.
+ * {tool, role_in_this_bid} or {area, effort}); rendering that raw throws
+ * React error #31 and white-screens the page. This picks the most meaningful
+ * field, pairs it with a detail when present, and never returns an object.
+ */
+export function asText(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(asText).filter(Boolean).join(", ");
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const headKeys = ["tool", "name", "title", "text", "area", "role", "type", "need", "point", "label"];
+    const detailKeys = ["role_in_this_bid", "why", "effort", "evidence", "detail", "note", "description"];
+    const head = headKeys.map((k) => o[k]).find((x) => typeof x === "string" && x.trim());
+    if (typeof head === "string") {
+      const detail = detailKeys.map((k) => o[k]).find((x) => typeof x === "string" && x.trim() && x !== head);
+      return typeof detail === "string" ? `${head.trim()} — ${detail.trim()}` : head.trim();
+    }
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
+/** Normalize any value into a clean list of display strings. */
+export function asList(v: unknown): string[] {
+  if (v == null || v === "") return [];
+  const arr = Array.isArray(v) ? v : [v];
+  return arr.map(asText).filter((s) => s && s !== "null" && s !== "undefined");
+}

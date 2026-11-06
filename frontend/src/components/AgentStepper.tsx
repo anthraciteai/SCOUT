@@ -7,6 +7,7 @@ import TeamCard from "./TeamCard";
 import FlintCard, { type FlintResult } from "./FlintCard";
 import ChatDrawer from "./ChatDrawer";
 import BidBrief from "./BidBrief";
+import ErrorBoundary from "./ErrorBoundary";
 import {
   AGENTS,
   COLORS,
@@ -19,6 +20,7 @@ import {
   type AgentName,
   type ContributeId,
   type SliceId,
+  asList,
   normalizeAgentResults,
   productHeadings,
   stripHtml,
@@ -126,13 +128,6 @@ const SCORE_LABELS: Record<string, string> = {
   win_probability: "win prob",
   fit_score: "fit",
 };
-
-function asList(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v
-    .map((x) => (typeof x === "object" && x ? JSON.stringify(x) : String(x)))
-    .filter((s) => s && s !== "null" && s !== "undefined");
-}
 
 /** Human-friendly result: verdict + a prominent "Why", strengths, then caveats. */
 function SmartResult({ name, data }: { name: string; data: AgentResult }) {
@@ -342,10 +337,16 @@ function SmartResult({ name, data }: { name: string; data: AgentResult }) {
 }
 
 function renderAgent(name: string, data: AgentResult) {
+  // Cards self-wrap in their own boundary; SmartResult needs one here so a
+  // malformed generic result can't white-screen the workspace.
   if (name === "Hewer") return <HewerCard rec={data as HewerResult} />;
   if (name === "Collier") return <TeamCard rec={data as TeamRecommendation} />;
   if (name === "Flint") return <FlintCard rec={data as FlintResult} />;
-  return <SmartResult name={name} data={data} />;
+  return (
+    <ErrorBoundary label={`${name}’s take`} resetKey={data}>
+      <SmartResult name={name} data={data} />
+    </ErrorBoundary>
+  );
 }
 
 export default function AgentStepper({
