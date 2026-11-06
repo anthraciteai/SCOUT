@@ -10,6 +10,8 @@ import AgentChat from "../components/AgentChat";
 import MatchBreakdown, { bucketFor } from "../components/MatchBreakdown";
 import RerankDialog from "../components/RerankDialog";
 import WhyMatched from "../components/WhyMatched";
+import TopicScatter from "../components/TopicScatter";
+import { buildTopicPoints } from "../lib/opportunity";
 import type { ScanBody } from "../api";
 
 function scoreClass(n: number) {
@@ -246,6 +248,15 @@ export default function Inbox() {
 
   const hasResume = Boolean(inbox?.resume && inbox.resume.chars > 0);
   const matches = inbox?.matches || [];
+  const scatterPoints = buildTopicPoints(
+    matches,
+    new Map(
+      Array.from(latestByTopic, ([k, v]) => [
+        k,
+        { fit_score: v.fit_score, recommendation: v.recommendation },
+      ])
+    )
+  );
 
   if (!hasResume) {
     return (
@@ -297,6 +308,16 @@ export default function Inbox() {
       )}
 
       <MatchBreakdown matches={matches} />
+
+      {scatterPoints.length > 0 && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Opportunity map</h3>
+          <p className="meta" style={{ marginTop: 0 }}>
+            Inbox match (x) vs Council fit (y). Bigger dot = more matched signals; color = component.
+          </p>
+          <TopicScatter points={scatterPoints} />
+        </div>
+      )}
 
       {!me && (
         <div className="card" style={{ borderColor: "#e6c07b" }}>
@@ -437,7 +458,7 @@ export default function Inbox() {
             <div className="row spread">
               <div className="grow">
                 <div className="row" style={{ alignItems: "center", gap: 8 }}>
-                  <Link to={`/topic/${m.topic_id}`} state={{ topic: t }} className="topic-title">
+                  <Link to={`/work/${m.topic_id}`} state={{ topic: t }} className="topic-title">
                     {m.topic_code} — {m.title}
                   </Link>
                   {m.is_new && (
@@ -530,8 +551,16 @@ export default function Inbox() {
               >
                 Council this topic
               </button>
+              <Link
+                to={`/work/${m.topic_id}`}
+                state={{ topic: t }}
+                className="ghost small"
+                style={{ textDecoration: "none" }}
+              >
+                Open workspace →
+              </Link>
               <Link to={`/topic/${m.topic_id}`} state={{ topic: t }} className="meta">
-                Open topic →
+                Classic view
               </Link>
             </div>
             <WhyMatched topicId={m.topic_id} topicCode={m.topic_code} />

@@ -1,0 +1,89 @@
+// SCOUT end-to-end workflow.
+// Render: dot -Tpng -Gdpi=160 scout-workflow.dot -o scout-workflow.png
+//
+// LIVE (ember) = implemented today. PLANNED (dashed grey) = connector seam
+// for adding more government solicitation sources (SAM.gov, Grants.gov, ...).
+
+digraph scout {
+  rankdir=TB;
+  compound=true;
+  bgcolor="#0a0b0d";
+  fontname="Helvetica";
+  fontcolor="#f5f6f8";
+  labelloc="t";
+  fontsize=20;
+  label="SCOUT  ·  resume + company  →  ranked, OCR-read, scored government solicitations  →  proposal\n ";
+  nodesep=0.45;
+  ranksep=0.7;
+
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=13,
+        color="#2a2d35", fillcolor="#14161b", fontcolor="#f5f6f8", penwidth=1.6, margin="0.24,0.16"];
+  edge [color="#8a8f99", penwidth=1.5, arrowsize=0.9, fontname="Helvetica",
+        fontsize=11, fontcolor="#a3a9b4"];
+
+  // ---------------- main vertical spine ----------------
+
+  s1 [label=<<b>1 · SIGN IN</b><br/><font point-size="11" color="#a3a9b4">Keycloak or stub token · auth-disabled in dev<br/>identity = user_id + company_id, scopes every read/write</font>>,
+      color="#ffc24b"];
+
+  s2 [label=<<b>2 · UPLOAD WHO YOU ARE</b><br/><font point-size="11" color="#a3a9b4">resume (ME) + company mission + products/features<br/>→ Docling OCR → Vault/SQLite → LLM profile<br/>(search queries · keywords · embeddings)</font>>,
+      color="#ff7a1a"];
+
+  s4 [label=<<b>4 · INBOX — RANKED FOR YOU</b><br/><font point-size="11" color="#a3a9b4">Matcher = keyword overlap + phrase Jaccard + embedding cosine<br/>→ ranked list, 0–100 match score, NEW flags</font>>,
+      color="#ff7a1a"];
+
+  // stage 5 = the deep workspace (the valuable part)
+  w1 [label=<<b>5 · TOPIC WORKSPACE</b>  <font point-size="10" color="#6f7580">(/work/:id)</font><br/><font point-size="11" color="#a3a9b4">pull the official PDF → Docling OCR → <b>RAW TEXT</b> (cached)</font>>,
+      color="#ff7a1a"];
+  w2 [label=<<b>SUMMARIZE</b><br/><font point-size="11" color="#a3a9b4">TL;DR · problem · objective · phases<br/>+ extracted requirements (with quoted evidence)</font>>,
+      color="#ff7a1a"];
+  w3 [label=<<b>FIT vs YOUR PROFILE</b><br/><font point-size="11" color="#a3a9b4">each requirement: <font color="#35d07f">meets</font> / <font color="#ffc24b">partial</font> / <font color="#ff5d5d">gap</font><br/>+ which capability matched → score + GO / NO-GO</font>>,
+      color="#35d07f"];
+
+  s6 [label=<<b>6 · WRITE &amp; LEARN</b><br/><font point-size="11" color="#a3a9b4">draft + live feedback (seed from requirements)<br/>→ Council / Team / Cost agents → Group desk<br/>→ Debriefs (win/loss → lessons)</font>>,
+      color="#ff7a1a"];
+
+  s1 -> s2 [label="signed in"];
+  s2 -> s4 [label=" profile signal", color="#ff7a1a", fontcolor="#ff7a1a", penwidth=2.0];
+  s4 -> w1 [label="open a topic"];
+  w1 -> w2;
+  w2 -> w3;
+  w3 -> s6 [label="GO → write"];
+
+  // ---------------- solicitation sources (feeds stage 4) ----------------
+  subgraph cluster_src {
+    label="3 · PULL GOVERNMENT SOLICITATIONS";
+    fontcolor="#ffc24b"; color="#2a2d35"; style="rounded"; penwidth=1.4; fontsize=13;
+
+    dsip  [label=<<b>DSIP</b><br/><font point-size="10">DoD SBIR/STTR</font><br/><font point-size="10" color="#35d07f">LIVE</font>>, color="#ff7a1a"];
+    sam   [label=<SAM.gov<br/><font point-size="9">notices</font><br/><font point-size="9">planned</font>>, style="rounded,dashed,filled", color="#6f7580", fontcolor="#a3a9b4"];
+    grn   [label=<Grants.gov<br/><font point-size="9">planned</font>>, style="rounded,dashed,filled", color="#6f7580", fontcolor="#a3a9b4"];
+    stt   [label=<state / prime<br/><font point-size="9">planned</font>>, style="rounded,dashed,filled", color="#6f7580", fontcolor="#a3a9b4"];
+
+    conn  [label=<<b>Source connector + normalizer</b><br/><font point-size="10" color="#a3a9b4">one Topic schema:<br/>code · title · agency · phase · dates</font>>,
+           fillcolor="#1a1d24", color="#8a7bff"];
+    cat   [label=<<b>Catalog</b><br/><font point-size="10" color="#a3a9b4">SQLite cache</font>>, fillcolor="#1a1d24"];
+
+    { rank=same; dsip; sam; grn; stt; }
+    dsip -> conn [color="#ff7a1a"];
+    sam  -> conn [style=dashed, color="#6f7580"];
+    grn  -> conn [style=dashed, color="#6f7580"];
+    stt  -> conn [style=dashed, color="#6f7580"];
+    conn -> cat;
+  }
+
+  cat -> s4 [label=" open topics", lhead=""];
+
+  // capabilities also drive the fit scoring directly
+  s2 -> w3 [label="capabilities (resume + products)", color="#35d07f", fontcolor="#35d07f", style=dashed, constraint=false];
+
+  // learning loop
+  s6 -> s2 [label="feedback loop", style=dashed, color="#6f7580", constraint=false];
+
+  // ---------------- local inference ----------------
+  ollama [label=<<b>Local Ollama</b>  <font point-size="10" color="#8a7bff">llama3.2 + embeddings</font><br/><font point-size="10" color="#8a7bff">ALL inference on-host — nothing leaves the box</font>>,
+          shape=note, fillcolor="#1a1d24", color="#8a7bff", fontcolor="#8a7bff"];
+  ollama -> s2 [style=dotted, color="#8a7bff", arrowhead=none, constraint=false];
+  ollama -> w2 [style=dotted, color="#8a7bff", arrowhead=none, constraint=false];
+  ollama -> w3 [style=dotted, color="#8a7bff", arrowhead=none, constraint=false];
+}

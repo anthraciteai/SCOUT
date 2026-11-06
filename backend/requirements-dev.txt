@@ -1,0 +1,4 @@
+# Dev/test-only deps. Install in the backend container to run the suite:
+#   docker exec scout-backend pip install -r requirements-dev.txt
+#   docker exec scout-backend sh -lc 'cd /app && python -m pytest app/tests -q'
+pytest>=8.0

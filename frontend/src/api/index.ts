@@ -47,6 +47,62 @@ export const TopicsApi = {
     `${API_BASE}/topics/${id}/download/${fmt}${inline ? "?inline=1" : ""}`,
 };
 
+// ---- Topic intelligence (OCR → summarize → fit vs profile) ----
+export interface TopicText {
+  topic_id: string;
+  chars: number;
+  source: string; // "pdf-ocr" | "dsip-json" | "none"
+  cached_at?: number;
+  text: string;
+}
+
+export interface TopicRequirement {
+  need: string;
+  evidence: string;
+}
+
+export interface TopicSummary {
+  topic_id: string;
+  source?: string;
+  chars?: number;
+  model?: string;
+  tldr: string;
+  problem: string;
+  objective: string;
+  who_cares: string;
+  phases: string[];
+  requirements: TopicRequirement[];
+  keywords: string[];
+}
+
+export interface FitRequirement {
+  need: string;
+  status: "meets" | "partial" | "gap";
+  evidence: string;
+  matched_capability: string;
+}
+
+export interface TopicFit {
+  topic_id: string;
+  cap_source?: string;
+  model?: string;
+  overall_fit: number;
+  recommendation: string;
+  summary: string;
+  requirements: FitRequirement[];
+  strengths: string[];
+  gaps: string[];
+}
+
+export const TopicIntelApi = {
+  text: (id: string, force = false) =>
+    api.get<TopicText>(`/topics/${id}/text`, { params: { force } }).then((r) => r.data),
+  summarize: (id: string, force = false) =>
+    api.post<TopicSummary>(`/topics/${id}/summary`, null, { params: { force } }).then((r) => r.data),
+  fit: (id: string, force = false) =>
+    api.post<TopicFit>(`/topics/${id}/fit`, null, { params: { force } }).then((r) => r.data),
+};
+
 // ---- Analysis ----
 export interface TopicMeta {
   topic_code?: string;

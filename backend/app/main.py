@@ -18,6 +18,7 @@ from .routers import (
     resume,
     system,
     team,
+    topic_intel,
     topics,
     tracker,
 )
@@ -48,6 +49,7 @@ app.include_router(system.router)
 app.include_router(auth.router)
 app.include_router(org.router)
 app.include_router(topics.router)
+app.include_router(topic_intel.router)
 app.include_router(matches.router)
 app.include_router(catalog.router)
 app.include_router(analysis.router)
