@@ -16,6 +16,11 @@ a closer look. Pipeline, live proposal feedback, and debrief OCR stay local — 
 The matcher does **not** run the council. Ranking is keyword overlap against DSIP search.
 Deep-score is an explicit button.
 
+> **New here (human or AI)? Start with [`docs/`](docs/README.md)** — a simple guide to every
+> page ([`docs/pages.md`](docs/pages.md)), the workflows ([`docs/workflows.md`](docs/workflows.md)),
+> the backend API ([`docs/backend-api.md`](docs/backend-api.md)), and the topic-intelligence
+> pipeline ([`docs/topic-intelligence.md`](docs/topic-intelligence.md)).
+
 ---
 
 ## Quick start
