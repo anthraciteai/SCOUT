@@ -1,0 +1,45 @@
+// SCOUT — topic intelligence (stage 5, the valuable part).
+// Solid = the pipeline. Dotted purple = local Ollama (grouped on the right so
+// the main flow stays clean). Green = your private, per-user fit.
+// Render: dot -Tpng -Gdpi=160 scout-topic-intel.dot -o scout-topic-intel.png
+digraph scout_topic_intel {
+  rankdir=TB;
+  bgcolor="#0a0b0d";
+  fontname="Helvetica";
+  fontcolor="#f5f6f8";
+  labelloc="t";
+  fontsize=18;
+  label="SCOUT · topic workspace  ·  OCR  →  summarize  →  fit vs you\n ";
+  nodesep=0.5;
+  ranksep=0.6;
+
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12,
+        color="#2a2d35", fillcolor="#14161b", fontcolor="#f5f6f8", penwidth=1.6,
+        margin="0.24,0.15"];
+  edge [color="#ff7a1a", penwidth=2.0, arrowsize=0.9];
+
+  pdf  [label=<<b>Official PDF</b><br/><font point-size="10" color="#a3a9b4">pulled from DSIP</font>>];
+  raw  [label=<<b>RAW TEXT</b>  <font point-size="9" color="#35d07f">SHARED</font><br/><font point-size="10" color="#a3a9b4">Docling OCR · cached once per topic</font>>, color="#ff7a1a"];
+  sum  [label=<<b>SUMMARY</b>  <font point-size="9" color="#35d07f">SHARED</font><br/><font point-size="10" color="#a3a9b4">TL;DR · problem · objective · phases<br/>+ requirements (with quoted evidence)</font>>, color="#ff7a1a"];
+  fit  [label=<<b>FIT vs YOUR PROFILE</b>  <font point-size="9" color="#ffc24b">PER-USER</font><br/><font point-size="10" color="#a3a9b4">each requirement: <font color="#35d07f">meets</font> / <font color="#ffc24b">partial</font> / <font color="#ff5d5d">gap</font><br/>→ 0–100 score + GO / NO-GO</font>>, color="#35d07f"];
+  read [label=<<b>EVIDENCE READER</b><br/><font point-size="10" color="#a3a9b4">hover a requirement ↔ the OCR sentence it came from</font>>, fillcolor="#1a1d24", color="#35d07f"];
+
+  caps [label=<<b>Your capabilities</b><br/><font point-size="10" color="#a3a9b4">resume (ME) + company products</font>>, color="#35d07f"];
+
+  pdf -> raw -> sum -> fit;
+  raw -> read [color="#35d07f", penwidth=1.6];
+  sum -> read [color="#35d07f", penwidth=1.6];
+  caps -> fit [color="#35d07f", penwidth=1.8, label=" scored against you", fontcolor="#35d07f", fontsize=10];
+
+  // local inference, grouped on the right (dotted = "powered by", not flow)
+  ollama [label=<<b>Local Ollama</b><br/><font point-size="10" color="#8a7bff">llama3.2 + embeddings · on-host</font>>,
+          shape=note, fillcolor="#1a1d24", color="#8a7bff", fontcolor="#8a7bff"];
+  ollama -> sum [style=dotted, color="#8a7bff", penwidth=1.4, arrowhead=none, constraint=false];
+  ollama -> fit [style=dotted, color="#8a7bff", penwidth=1.4, arrowhead=none, constraint=false];
+  { rank=same; sum; ollama; }
+
+  legend [shape=note, fillcolor="#1a1d24", color="#2a2d35", fontcolor="#a3a9b4",
+          fontsize=10, penwidth=1.2,
+          label=<<font color="#35d07f"><b>SHARED</b></font> = one compute, reused org-wide      <font color="#ffc24b"><b>PER-USER</b></font> = private to you<br/><font color="#8a7bff"><b>···</b></font> = local Ollama (nothing leaves the box)>];
+  fit -> legend [style=invis];
+}

@@ -1,8 +1,12 @@
 # Workflows
 
-How the pieces connect, start to finish. Diagram: [`scout-workflow.png`](scout-workflow.png).
+How the pieces connect, start to finish. Three small diagrams instead of one busy
+one — the overview here, then a zoom-in for sources (§3) and the topic workspace (§4).
 
-![SCOUT workflow](scout-workflow.png)
+![SCOUT overview](scout-overview.png)
+
+> The old everything-on-one-page diagram is still around as
+> [`scout-workflow.png`](scout-workflow.png) if you want it.
 
 ---
 
@@ -25,6 +29,11 @@ How the pieces connect, start to finish. Diagram: [`scout-workflow.png`](scout-w
 
 ## 3. Inbox ranking (automatic, cheap)
 
+Where topics come from — DSIP is live today; other sources plug into the same
+normalizer (dashed = planned):
+
+![SCOUT solicitation sources](scout-sources.png)
+
 1. Backend extracts search terms from your resume/company pack.
 2. Queries open + pre-release **DSIP** topics (public API, proxied).
 3. Ranks by keyword/embedding overlap — **score high-to-low, not a cutoff** (anyone can bid
@@ -37,15 +46,7 @@ No LLM council here — this runs on a timer and after login, and it's safe to r
 
 Open a topic's **Workspace** (`/work/:id`). On demand it builds a chain, each step cached:
 
-```
-DSIP PDF ──Docling OCR──▶ raw text ──LLM──▶ summary (requirements + evidence)
-                                   │
-                        your resume + company pack
-                                   │
-                                   ▼
-                      Fit: requirement-by-requirement
-                      (meets / partial / gap) + GO/NO-GO + 0–100
-```
+![SCOUT topic intelligence](scout-topic-intel.png)
 
 - **text + summary are shared** (identical for everyone → computed once, reused org-wide).
 - **fit is private** (scored against your profile → stored per-user, you only see your own).

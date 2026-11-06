@@ -1,0 +1,46 @@
+// SCOUT — where solicitations come from. The ONLY dashed lines here mean
+// "planned", so the live path (solid ember) reads at a glance.
+// Render: dot -Tpng -Gdpi=160 scout-sources.dot -o scout-sources.png
+digraph scout_sources {
+  rankdir=LR;
+  bgcolor="#0a0b0d";
+  fontname="Helvetica";
+  fontcolor="#f5f6f8";
+  labelloc="t";
+  fontsize=18;
+  label="SCOUT · solicitation sources  →  one Topic schema  →  catalog  →  inbox\n ";
+  nodesep=0.35;
+  ranksep=0.8;
+
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12,
+        color="#2a2d35", fillcolor="#14161b", fontcolor="#f5f6f8", penwidth=1.6,
+        margin="0.22,0.14"];
+  edge [color="#ff7a1a", penwidth=1.9, arrowsize=0.9];
+
+  // live source
+  dsip [label=<<b>DSIP</b><br/><font point-size="10">DoD SBIR/STTR</font><br/><font point-size="10" color="#35d07f">LIVE</font>>,
+        color="#ff7a1a"];
+
+  // planned sources (dashed = planned, and nothing else is dashed)
+  sam [label=<SAM.gov<br/><font point-size="9">planned</font>>, style="rounded,dashed,filled", color="#6f7580", fontcolor="#a3a9b4"];
+  grn [label=<Grants.gov<br/><font point-size="9">planned</font>>, style="rounded,dashed,filled", color="#6f7580", fontcolor="#a3a9b4"];
+  stt [label=<state / prime<br/><font point-size="9">planned</font>>, style="rounded,dashed,filled", color="#6f7580", fontcolor="#a3a9b4"];
+
+  conn [label=<<b>Connector + normalizer</b><br/><font point-size="10" color="#a3a9b4">one Topic schema:<br/>code · title · agency · phase · dates</font>>,
+        fillcolor="#1a1d24", color="#8a7bff"];
+  cat  [label=<<b>Catalog</b><br/><font point-size="10" color="#a3a9b4">SQLite cache</font>>, fillcolor="#1a1d24"];
+  inbox [label=<<b>Inbox ranker</b><br/><font point-size="10" color="#a3a9b4">rank vs your profile</font>>, color="#ff7a1a"];
+
+  { rank=same; dsip; sam; grn; stt; }
+
+  dsip -> conn;
+  sam  -> conn [style=dashed, color="#6f7580"];
+  grn  -> conn [style=dashed, color="#6f7580"];
+  stt  -> conn [style=dashed, color="#6f7580"];
+  conn -> cat -> inbox;
+
+  legend [shape=note, fillcolor="#1a1d24", color="#2a2d35", fontcolor="#a3a9b4",
+          fontsize=10, penwidth=1.2,
+          label=<<font color="#ff7a1a"><b>solid</b></font> = live today      <font color="#6f7580"><b>dashed</b></font> = planned source>];
+  cat -> legend [style=invis];
+}

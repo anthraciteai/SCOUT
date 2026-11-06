@@ -1,0 +1,39 @@
+// SCOUT — overview (the happy path). One clean vertical spine, solid lines.
+// Render: dot -Tpng -Gdpi=160 scout-overview.dot -o scout-overview.png
+digraph scout_overview {
+  rankdir=TB;
+  bgcolor="#0a0b0d";
+  fontname="Helvetica";
+  fontcolor="#f5f6f8";
+  labelloc="t";
+  fontsize=19;
+  label="SCOUT · overview\nresume + company  →  ranked, OCR-read, scored solicitations  →  proposal\n ";
+  nodesep=0.5;
+  ranksep=0.6;
+
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=13,
+        color="#2a2d35", fillcolor="#14161b", fontcolor="#f5f6f8", penwidth=1.6,
+        margin="0.26,0.16"];
+  edge [color="#ff7a1a", penwidth=2.0, arrowsize=0.9];
+
+  s1 [label=<<b>1 · SIGN IN</b><br/><font point-size="11" color="#a3a9b4">identity = user + company · scopes every read/write</font>>,
+      color="#ffc24b"];
+  s2 [label=<<b>2 · WHO YOU ARE</b><br/><font point-size="11" color="#a3a9b4">resume (ME) + company mission + products</font>>,
+      color="#ff7a1a"];
+  s3 [label=<<b>3 · PULL SOLICITATIONS</b><br/><font point-size="11" color="#a3a9b4">DSIP live (SAM / Grants planned) → catalog<br/><font color="#6f7580">see: sources diagram</font></font>>,
+      color="#ff7a1a"];
+  s4 [label=<<b>4 · INBOX — RANKED FOR YOU</b><br/><font point-size="11" color="#a3a9b4">keyword + phrase + embedding overlap → 0–100 match</font>>,
+      color="#ff7a1a"];
+  s5 [label=<<b>5 · TOPIC WORKSPACE</b><br/><font point-size="11" color="#a3a9b4">OCR → summarize → fit vs you (GO / NO-GO)<br/><font color="#6f7580">see: topic-intelligence diagram</font></font>>,
+      color="#35d07f"];
+  s6 [label=<<b>6 · WRITE &amp; LEARN</b><br/><font point-size="11" color="#a3a9b4">draft + live feedback → council / team → debriefs</font>>,
+      color="#ff7a1a"];
+
+  s1 -> s2 -> s3 -> s4 -> s5 -> s6;
+
+  note [shape=note, fillcolor="#1a1d24", color="#8a7bff", fontcolor="#8a7bff",
+        fontsize=11, penwidth=1.4,
+        label=<<b>All local</b><br/>LLM = host Ollama · OCR = Docling<br/>nothing leaves the box>];
+  note -> s4 [style=invis];
+  { rank=same; s4; note; }
+}

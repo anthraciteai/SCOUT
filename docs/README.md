@@ -38,7 +38,9 @@ You ─▶ Profile (resume = ME)
 | [`../architecture/auth-and-storage.md`](../architecture/auth-and-storage.md) | The org vault layout + auth (ACL gates, Keycloak/SeaweedFS) |
 | [`../README.md`](../README.md) | How to run it (Docker, dev, config, the agent roster) |
 
-Diagram: [`scout-workflow.png`](scout-workflow.png) (source: `scout-workflow.dot`).
+Diagrams (in [`workflows.md`](workflows.md)): [overview](scout-overview.png) ·
+[sources](scout-sources.png) · [topic intelligence](scout-topic-intel.png). Each has a
+`.dot` source next to it; the old all-in-one is [`scout-workflow.png`](scout-workflow.png).
 
 ## Rules of the road (important for agents)
 
