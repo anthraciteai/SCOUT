@@ -84,6 +84,7 @@ export interface FitRequirement {
 
 export interface TopicFit {
   topic_id: string;
+  scope?: { company_id: string; user_id: string };
   cap_source?: string;
   model?: string;
   overall_fit: number;
@@ -101,6 +102,9 @@ export const TopicIntelApi = {
     api.post<TopicSummary>(`/topics/${id}/summary`, null, { params: { force } }).then((r) => r.data),
   fit: (id: string, force = false) =>
     api.post<TopicFit>(`/topics/${id}/fit`, null, { params: { force } }).then((r) => r.data),
+  // Cheap read of the caller's cached fit (no model call); null if not scored yet.
+  fitCached: (id: string) =>
+    api.get<TopicFit | null>(`/topics/${id}/fit`).then((r) => r.data),
 };
 
 // ---- Analysis ----

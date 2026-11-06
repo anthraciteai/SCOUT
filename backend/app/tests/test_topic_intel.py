@@ -56,3 +56,39 @@ def test_cache_dir_sanitizes_topic_id(tmp_path, monkeypatch):
     d = topic_intel._cache_dir("../../etc/passwd")
     assert str(tmp_path) in d
     assert "/etc/passwd" not in d
+
+
+# ---- identity scoping (shared summary vs per-user fit) ----------------
+
+def test_ident_key_falls_back_to_default_company_and_shared_user(monkeypatch):
+    monkeypatch.setattr(topic_intel, "current_identity", lambda: None)
+    monkeypatch.setattr(topic_intel.settings, "default_company", "anthracite")
+    assert topic_intel._ident_key() == ("anthracite", "shared")
+
+
+def test_ident_key_uses_and_sanitizes_identity(monkeypatch):
+    class _Ident:
+        company_id = "acme/corp"
+        user_id = "user@42"
+
+    monkeypatch.setattr(topic_intel, "current_identity", lambda: _Ident())
+    assert topic_intel._ident_key() == ("acme_corp", "user_42")
+
+
+def test_fit_name_is_scoped_per_identity():
+    assert (
+        topic_intel._fit_name("acme", "alice")
+        != topic_intel._fit_name("acme", "bob")
+    )
+    assert topic_intel._fit_name("acme", "alice") == "fit__acme__alice.json"
+
+
+def test_fit_cache_is_isolated_between_users(tmp_path, monkeypatch):
+    monkeypatch.setattr(topic_intel.settings, "data_dir", str(tmp_path))
+    # Two users score the same topic; each must read back only their own fit.
+    topic_intel._write_json("t1", topic_intel._fit_name("acme", "alice"), {"overall_fit": 90})
+    topic_intel._write_json("t1", topic_intel._fit_name("acme", "bob"), {"overall_fit": 10})
+    assert topic_intel._read_json("t1", topic_intel._fit_name("acme", "alice")) == {"overall_fit": 90}
+    assert topic_intel._read_json("t1", topic_intel._fit_name("acme", "bob")) == {"overall_fit": 10}
+    # A brand-new user has no cached fit yet.
+    assert topic_intel._read_json("t1", topic_intel._fit_name("acme", "carol")) is None

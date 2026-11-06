@@ -43,7 +43,6 @@ export function MatchBreakdown({ matches }: { matches: MatchItem[] }) {
     hint: b.hint,
   }));
   const nonZero = data.filter((d) => d.value > 0);
-  const topBucket = [...BUCKETS].find((b) => counts[b.key] > 0);
 
   if (!total) {
     return null;
@@ -136,24 +135,11 @@ export function MatchBreakdown({ matches }: { matches: MatchItem[] }) {
                         {n} · {pct}%
                       </span>
                     </div>
-                    <div className="meta" style={{ fontSize: 11, lineHeight: 1.3 }}>
-                      {b.hint}
-                    </div>
                   </div>
                 </div>
               );
             })}
           </div>
-          {topBucket && (
-            <div className="meta" style={{ marginTop: 10, fontSize: 12 }}>
-              Best bucket:{" "}
-              <span style={{ color: topBucket.color, fontWeight: 600 }}>
-                {topBucket.label}
-              </span>{" "}
-              ({counts[topBucket.key]} topics). Grey = long tail, hidden from the
-              top-of-inbox eye path.
-            </div>
-          )}
         </div>
       </div>
     </div>

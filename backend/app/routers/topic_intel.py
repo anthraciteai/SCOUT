@@ -50,10 +50,35 @@ def _read_json(topic_id: str, name: str) -> Optional[dict[str, Any]]:
 def _write_json(topic_id: str, name: str, payload: dict[str, Any]) -> None:
     path = os.path.join(_cache_dir(topic_id), name)
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
     except OSError:
         pass
+
+
+# ---- identity scoping -------------------------------------------------
+#
+# text.json + summary.json are topic-intrinsic: identical for everyone, so we
+# cache them once per topic and share them across all orgs (big token savings).
+# A fit, by contrast, is scored against the *caller's* resume/products, so it
+# is cached per (company_id, user_id) and only ever read back for that same
+# identity — which in production is the subject of the validated JWT.
+
+def _safe_ident(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", value or "")[:80] or "shared"
+
+
+def _ident_key() -> tuple[str, str]:
+    """(company_id, user_id) for the current caller, with dev fallbacks."""
+    ident = current_identity()
+    cid = (ident.company_id if ident else None) or settings.default_company
+    uid = (ident.user_id if ident else None) or "shared"
+    return _safe_ident(cid), _safe_ident(uid)
+
+
+def _fit_name(company_id: str, user_id: str) -> str:
+    return f"fit__{company_id}__{user_id}.json"
 
 
 # ---- raw text ----------------------------------------------------------
@@ -239,11 +264,15 @@ _FIT_SYSTEM = (
 
 
 async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
+    company_id, user_id = _ident_key()
+    name = _fit_name(company_id, user_id)
     if not force:
-        cached = _read_json(topic_id, "fit.json")
+        cached = _read_json(topic_id, name)
         if cached:
             return cached
-    summary = await _ensure_summary(topic_id, force=force)
+    # The shared summary is reused as-is; forcing a re-score must NOT re-OCR or
+    # re-summarize the topic (that work is identity-independent).
+    summary = await _ensure_summary(topic_id, force=False)
     cap_text, cap_source = _capability_text()
     if not cap_text.strip():
         raise HTTPException(
@@ -285,6 +314,7 @@ async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
         overall = 0
     payload = {
         "topic_id": topic_id,
+        "scope": {"company_id": company_id, "user_id": user_id},
         "cap_source": cap_source,
         "model": model,
         "cached_at": time.time(),
@@ -304,7 +334,7 @@ async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
         "strengths": [str(s) for s in (data.get("strengths") or [])][:8],
         "gaps": [str(g) for g in (data.get("gaps") or [])][:8],
     }
-    _write_json(topic_id, "fit.json", payload)
+    _write_json(topic_id, name, payload)
     return payload
 
 
@@ -328,3 +358,14 @@ async def topic_summary(topic_id: str, force: bool = Query(False)):
 @router.post("/{topic_id}/fit")
 async def topic_fit(topic_id: str, force: bool = Query(False)):
     return await _fit(topic_id, force=force)
+
+
+@router.get("/{topic_id}/fit")
+async def topic_fit_cached(topic_id: str):
+    """Return the caller's cached fit for this topic without re-scoring.
+
+    Identity comes from the validated JWT (dev falls back to the default
+    company + a shared user), so a user only ever sees their own fit. Returns
+    null when nothing has been scored yet for this identity."""
+    company_id, user_id = _ident_key()
+    return _read_json(topic_id, _fit_name(company_id, user_id))

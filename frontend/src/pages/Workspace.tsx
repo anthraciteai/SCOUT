@@ -12,8 +12,9 @@ import {
 import type { Topic } from "../types";
 import { topicMeta, statusClass, TopicDates } from "./Browse";
 import { useToast } from "../toast";
+import EvidenceReader from "../components/EvidenceReader";
 
-type Tab = "summary" | "fit" | "write" | "source";
+type Tab = "summary" | "reader" | "fit" | "write" | "source";
 
 function recClass(rec?: string) {
   const v = (rec || "").toUpperCase();
@@ -161,6 +162,28 @@ export default function Workspace() {
     }
   }
 
+  // The reader needs both the summary (for requirements + evidence) and the
+  // full OCR text; pull the text lazily the first time the tab is opened.
+  useEffect(() => {
+    if (tab === "reader" && summary && !raw && !rawBusy) {
+      void doRaw(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, summary, raw, rawBusy]);
+
+  // Opening the fit tab: show *your* already-scored fit instantly (no model
+  // call / no tokens). Scoring only runs when you click the button.
+  useEffect(() => {
+    if (tab === "fit" && !fit && !fitBusy) {
+      TopicIntelApi.fitCached(id)
+        .then((f) => {
+          if (f) setFit(f);
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const title = meta?.title || topic?.topicTitle || topic?.title || id;
@@ -199,6 +222,9 @@ export default function Workspace() {
         <button className={`tab ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>
           Summary
         </button>
+        <button className={`tab ${tab === "reader" ? "active" : ""}`} onClick={() => setTab("reader")}>
+          Reader
+        </button>
         <button className={`tab ${tab === "fit" ? "active" : ""}`} onClick={() => setTab("fit")}>
           Fit vs you
           {fit && (
@@ -224,9 +250,8 @@ export default function Workspace() {
         <div>
           {!summary && !summaryBusy && (
             <div className="card">
-              <p style={{ marginTop: 0 }}>
-                Pull the official solicitation PDF, OCR it, and condense it into a scannable
-                brief + extracted requirements.
+              <p style={{ marginTop: 0 }} className="meta">
+                Read the PDF and condense it into a brief + requirements.
               </p>
               <button onClick={() => doSummary(false)}>Summarize this topic</button>
             </div>
@@ -316,14 +341,41 @@ export default function Workspace() {
         </div>
       )}
 
+      {/* ---- READER (evidence grounding) ---- */}
+      {tab === "reader" && (
+        <div>
+          {!summary ? (
+            <div className="card">
+              <p style={{ marginTop: 0 }} className="meta">
+                Summarize first — the reader highlights the sentence each requirement came from.
+              </p>
+              <button onClick={() => doSummary(false)} disabled={summaryBusy}>
+                {summaryBusy ? "Summarizing…" : "Summarize this topic"}
+              </button>
+            </div>
+          ) : rawBusy || !raw ? (
+            <div className="card spinner">Loading the source text…</div>
+          ) : !raw.text ? (
+            <div className="card meta">No source text could be extracted for this topic.</div>
+          ) : (
+            <div className="card">
+              <p className="meta" style={{ marginTop: 0 }}>
+                Hover a requirement to find its source sentence — or hover the highlighted
+                text to see which requirement it drove. Colors tie the two together.
+              </p>
+              <EvidenceReader text={raw.text} requirements={summary.requirements} />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ---- FIT ---- */}
       {tab === "fit" && (
         <div>
           {!fit && !fitBusy && (
             <div className="card">
-              <p style={{ marginTop: 0 }}>
-                Score each requirement against <strong>your resume + company mission + products</strong>:
-                meets / partial / gap, with the exact capability that matched.
+              <p style={{ marginTop: 0 }} className="meta">
+                Score each requirement against your profile — meets / partial / gap.
               </p>
               <button onClick={() => doFit(false)}>Score fit vs your profile</button>
             </div>
@@ -446,9 +498,8 @@ export default function Workspace() {
         <div>
           {!raw && !rawBusy && (
             <div className="card">
-              <p style={{ marginTop: 0 }}>
-                The raw text SCOUT extracted (OCR of the official PDF, or DSIP JSON fallback).
-                This is what the summary and fit are built from.
+              <p style={{ marginTop: 0 }} className="meta">
+                The raw OCR text the summary and fit are built from.
               </p>
               <button onClick={() => doRaw(false)}>Load raw text</button>
             </div>

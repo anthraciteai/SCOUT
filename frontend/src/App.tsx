@@ -120,6 +120,9 @@ export default function App() {
           <Route path="/browse" element={<Browse />} />
           <Route path="/topic/:id" element={<TopicDetail />} />
           <Route path="/work/:id" element={<Workspace />} />
+          {/* Vanity URL for a personal fit view. The actual fit identity comes
+              from the JWT on the backend, never from this path segment. */}
+          <Route path="/work/:id/ME/:userId" element={<Workspace />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/tracker" element={<Tracker />} />
           <Route path="/desk" element={<GroupDesk />} />

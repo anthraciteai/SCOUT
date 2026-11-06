@@ -294,11 +294,16 @@ export default function Inbox() {
       />
       <h1>Inbox</h1>
       <p className="subtitle">
-        Topics ranked for <strong>{inbox?.resume?.name}</strong>
+        Ranked for you
         {inbox?.scanned_at && (
-          <> · scanned {new Date(inbox.scanned_at).toLocaleString()}</>
+          <>
+            {" "}· updated{" "}
+            {new Date(inbox.scanned_at).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+            })}
+          </>
         )}
-        {inbox?.model && <> · {inbox.model}</>}
       </p>
 
       {error && (
