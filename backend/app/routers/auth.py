@@ -144,6 +144,7 @@ async def _token_response(v, tok: dict) -> dict:
     return {
         "token": tok["access_token"],
         "refresh_token": tok.get("refresh_token"),
+        "id_token": tok.get("id_token"),  # used as id_token_hint on logout
         "expires_in": tok.get("expires_in"),
         "user": _serialize(ident, v),
     }

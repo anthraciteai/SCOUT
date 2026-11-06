@@ -1,0 +1,106 @@
+# FULL STACK in one file: frontend + backend + Keycloak + SeaweedFS.
+# Everything SCOUT needs to run production-shaped, no -f merging required.
+#
+#   docker compose -f docker-compose.all.yml up -d --build
+#
+# URLs:
+#   SCOUT UI        http://localhost:8080
+#   Backend + docs  http://localhost:8000/docs   (host networking)
+#   Keycloak admin  http://localhost:8081         (admin / admin)
+#   SeaweedFS S3    http://localhost:8333
+#
+# Auth is ON (AUTH_DISABLED=false): sign in with Keycloak (ken/jake/matt,
+# password = username). Logout returns you to Keycloak. LLM is still the host
+# snap Ollama on 127.0.0.1:11434 — do not start a second one.
+#
+# Optional in-compose GPU/CPU Ollama instead of the host snap:
+#   docker compose -f docker-compose.all.yml --profile embedded up -d --build
+
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: scout-seaweedfs
+    command: server -s3 -s3.config=/etc/seaweedfs/s3config.json -dir=/data
+    ports:
+      - "8333:8333"
+      - "9333:9333"
+    volumes:
+      - seaweed_data:/data
+      - ./seaweedfs/s3config.json:/etc/seaweedfs/s3config.json:ro
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: scout-keycloak
+    command: start-dev --import-realm
+    ports:
+      - "8081:8080"
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    volumes:
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+    restart: unless-stopped
+
+  # Optional in-compose Ollama (host snap on :11434 is the default).
+  ollama:
+    profiles: ["embedded"]
+    image: ollama/ollama:latest
+    container_name: scout-ollama
+    ports:
+      - "11436:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    container_name: scout-backend
+    # Snap Ollama listens on 127.0.0.1:11434 only; host networking lets the
+    # backend reach it (and Keycloak/SeaweedFS on localhost) without a second
+    # published Ollama.
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_BASE_URL=http://127.0.0.1:11434
+      - AUTH_DISABLED=false
+      - AUTH_SECRET=${AUTH_SECRET:-scout-dev-secret-change-me}
+      - DEFAULT_COMPANY=anthracite
+      - VAULT_DIR=/data/vault
+      - STORAGE_ENDPOINT=http://127.0.0.1:8333
+      - STORAGE_BUCKET=scout
+      - AWS_ACCESS_KEY_ID=scout
+      - AWS_SECRET_ACCESS_KEY=scout-secret-key
+      - AWS_REGION=us-east-1
+      - KEYCLOAK_URL=http://127.0.0.1:8081
+      - KEYCLOAK_PUBLIC_URL=http://localhost:8081
+      - KEYCLOAK_REALM=scout
+      - KEYCLOAK_AUDIENCE=scout-frontend
+    volumes:
+      - app_data:/data
+      - ./backend/app:/app/app
+    depends_on:
+      - seaweedfs
+      - keycloak
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_BASE=/api
+    container_name: scout-frontend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  seaweed_data:
+  app_data:
+  ollama_models:

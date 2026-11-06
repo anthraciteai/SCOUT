@@ -44,6 +44,7 @@ async def _fake_grant(extra):
     return {
         "access_token": f"KC_{kind}",
         "refresh_token": f"R_{kind}",
+        "id_token": f"ID_{kind}",
         "expires_in": 300,
     }
 
@@ -72,6 +73,7 @@ def test_keycloak_login_returns_real_access_token(kc):
     assert res["token"] == "KC_password"  # the Keycloak token, NOT a stub
     assert not res["token"].startswith("scout.")
     assert res["refresh_token"] == "R_password"
+    assert res["id_token"] == "ID_password"  # used as id_token_hint on logout
     assert res["user"]["user_id"] == "alice"
     assert res["user"]["auth"] == "keycloak"
 

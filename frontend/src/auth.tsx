@@ -6,11 +6,14 @@ function storeTokens(res: AuthTokenResponse) {
   localStorage.setItem("scout_token", res.token);
   if (res.refresh_token) localStorage.setItem("scout_refresh", res.refresh_token);
   else localStorage.removeItem("scout_refresh");
+  if (res.id_token) localStorage.setItem("scout_id_token", res.id_token);
+  else localStorage.removeItem("scout_id_token");
 }
 
 function clearTokens() {
   localStorage.removeItem("scout_token");
   localStorage.removeItem("scout_refresh");
+  localStorage.removeItem("scout_id_token");
 }
 
 interface AuthCtx {
@@ -77,8 +80,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    const idToken = localStorage.getItem("scout_id_token");
     clearTokens();
     setUser(null);
+    // In Keycloak mode, end the SSO session too (RP-initiated logout) so the
+    // browser lands back on Keycloak, not a half-logged-in app.
+    if (status && !status.auth_disabled && status.keycloak_url && status.keycloak_realm) {
+      const base = status.keycloak_url.replace(/\/+$/, "");
+      const url = new URL(`${base}/realms/${status.keycloak_realm}/protocol/openid-connect/logout`);
+      if (idToken) url.searchParams.set("id_token_hint", idToken);
+      if (status.keycloak_client_id) url.searchParams.set("client_id", status.keycloak_client_id);
+      url.searchParams.set("post_logout_redirect_uri", window.location.origin + "/");
+      window.location.href = url.toString();
+    }
   }
 
   return (

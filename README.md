@@ -43,8 +43,16 @@ re-run the LLM.
 Not needed to prove the product locally:
 
 ```bash
+# one file, whole stack (frontend + backend + Keycloak + SeaweedFS)
+docker compose -f docker-compose.all.yml up -d --build
+
+# or the same thing as a base + overlay merge
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
+
+Auth is ON here: sign in via Keycloak (ken/jake/matt, password = username), and
+**logout returns you to Keycloak** (RP-initiated end-session). The backend verifies
+the Keycloak JWT locally against the realm JWKS.
 
 - File ACL: `companies/anthracite/employees/{ken|jake|matt|dev}` (existence = employed)
 - Company tags: `companies/anthracite/tags.json` (not under an SBIR)

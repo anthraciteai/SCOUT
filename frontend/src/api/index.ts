@@ -582,6 +582,7 @@ export const SystemApi = {
 export interface AuthTokenResponse {
   token: string;
   refresh_token?: string | null;
+  id_token?: string | null;
   expires_in?: number | null;
   user: ScoutUser;
 }
