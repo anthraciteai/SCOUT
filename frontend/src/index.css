@@ -129,7 +129,9 @@ a:hover { color: var(--ember); }
   font-weight: 800;
 }
 
-.content { flex: 1; padding: 28px 32px; max-width: 1240px; }
+.content { flex: 1; padding: 28px 32px; max-width: 1680px; width: 100%; }
+/* The agent workspace is a dense two-pane tool — let it use the full width. */
+.content:has(.agent-workspace) { max-width: none; }
 
 /* ---------- Typography ---------- */
 h1 { font-size: 26px; margin: 0 0 6px; font-weight: 800; letter-spacing: -0.01em; }
@@ -271,10 +273,13 @@ th { color: var(--faint); font-weight: 700; font-size: 11.5px; letter-spacing: 0
 .agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .agent-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
 
+.agent-workspace { width: 100%; }
 .agent-workspace-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 0.9fr) minmax(320px, 1.2fr);
-  gap: 14px;
+  /* Reference doc stays readable on the left; the interactive agent card +
+     results + chat take the lion's share of the available width on the right. */
+  grid-template-columns: minmax(260px, 0.65fr) minmax(480px, 1.6fr);
+  gap: 18px;
   margin-top: 12px;
   align-items: start;
 }
@@ -363,10 +368,101 @@ code {
 }
 .agent-chat textarea { flex: 1; min-width: 0; }
 .agent-chat-log { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+
+/* Requirement ↔ product grounding: each need cites the SBIR text that drives it. */
+.req-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.req-row { display: flex; gap: 10px; align-items: flex-start; }
+.req-badge {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 1px;
+}
+.req-body { min-width: 0; }
+.req-need { font-size: 13.5px; line-height: 1.45; }
+.req-evi {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-style: italic;
+  margin-top: 2px;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+}
+
+/* Fill mode: used inside the chat drawer so messages grow and input pins. */
+.agent-chat.fill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+.agent-chat.fill .agent-chat-log { flex: 1; min-height: 0; }
+
+/* ---------- Chat drawer (ChatGPT-style right panel) ---------- */
+.chat-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 60;
+  animation: fadeIn 0.15s ease-out;
+}
+.chat-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(460px, 94vw);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  box-shadow: -28px 0 70px -30px rgba(0, 0, 0, 0.85);
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  animation: drawerIn 0.2s ease-out;
+}
+.chat-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.chat-drawer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 14px 16px;
+}
+@keyframes drawerIn { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .chat-row { display: flex; flex-direction: column; max-width: 92%; }
 .chat-row.mine { align-self: flex-end; align-items: flex-end; }
 .chat-row.theirs { align-self: flex-start; align-items: flex-start; }
-.chat-who { font-size: 11px; color: var(--faint); margin-bottom: 3px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.chat-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.chat-row.mine .chat-meta { flex-direction: row-reverse; }
+.chat-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #0a0b0d;
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.chat-who { font-size: 11px; color: var(--faint); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.chat-typing { color: var(--muted); font-style: italic; }
 .chat-bubble {
   white-space: pre-wrap;
   font-size: 13px;

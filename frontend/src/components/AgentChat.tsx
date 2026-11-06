@@ -15,12 +15,14 @@ export default function AgentChat({
   topicsMeta,
   proposalText,
   compact,
+  fill,
 }: {
   topicId: string;
   agent: string;
   topicsMeta?: Record<string, TopicMeta>;
   proposalText?: string;
   compact?: boolean;
+  fill?: boolean;
 }) {
   const [log, setLog] = useState<AgentChatLog | null>(null);
   const [draft, setDraft] = useState("");
@@ -82,7 +84,7 @@ export default function AgentChat({
   const messages = log?.messages || [];
 
   return (
-    <div className="agent-chat" style={{ borderColor: color }}>
+    <div className={`agent-chat${fill ? " fill" : ""}`} style={{ borderColor: color }}>
       <div className="row spread" style={{ marginBottom: 8 }}>
         <div className="meta">
           Working log with {agent}
@@ -95,7 +97,7 @@ export default function AgentChat({
       <div
         ref={scroller}
         className="agent-chat-log"
-        style={{ maxHeight: compact ? 220 : 340 }}
+        style={fill ? { flex: 1, minHeight: 0 } : { maxHeight: compact ? 220 : 340 }}
       >
         {messages.length === 0 && !busy && (
           <div className="meta" style={{ padding: "8px 4px" }}>
@@ -105,19 +107,40 @@ export default function AgentChat({
         )}
         {messages.map((m, i) => {
           const mine = m.role === "user";
+          const who = mine ? "You" : m.speaker || agent;
+          const avatarColor = mine ? "var(--muted)" : color;
+          const initial = (who || "?").trim().charAt(0).toUpperCase();
           return (
             <div key={i} className={`chat-row ${mine ? "mine" : "theirs"}`}>
-              <div className="chat-who">{mine ? m.speaker || "You" : m.speaker || agent}</div>
-              <div
-                className="chat-bubble"
-                style={mine ? undefined : { borderColor: color }}
-              >
+              <div className="chat-meta">
+                <span className="chat-avatar" style={{ background: avatarColor }}>
+                  {initial}
+                </span>
+                <span className="chat-who" style={mine ? undefined : { color }}>
+                  {who}
+                </span>
+              </div>
+              <div className="chat-bubble" style={mine ? undefined : { borderColor: color }}>
                 {m.text}
               </div>
             </div>
           );
         })}
-        {busy && <div className="meta chat-row theirs">{agent} is thinking…</div>}
+        {busy && (
+          <div className="chat-row theirs">
+            <div className="chat-meta">
+              <span className="chat-avatar" style={{ background: color }}>
+                {agent.charAt(0).toUpperCase()}
+              </span>
+              <span className="chat-who" style={{ color }}>
+                {agent}
+              </span>
+            </div>
+            <div className="chat-bubble" style={{ borderColor: color }}>
+              <span className="chat-typing">thinking…</span>
+            </div>
+          </div>
+        )}
       </div>
       {error && (
         <div className="meta" style={{ color: "var(--red)", marginTop: 6 }}>

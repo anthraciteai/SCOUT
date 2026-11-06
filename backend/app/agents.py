@@ -23,9 +23,14 @@ AGENTS: dict[str, dict[str, str]] = {
             "Judge the topic objective and description against what CANARI actually does. "
             "Do NOT ask whether the topic belongs to the Army/Navy/USAF/USMC mission. "
             "Do NOT act as a generic go/no-go scout for the company as a whole.\n"
+            "For EACH major requirement in THIS topic, add a `requirements` entry that "
+            "quotes the exact phrase from the topic stating it (evidence), names where it "
+            "appears (objective|description|keywords), and rates status meets|partial|gap. "
+            "Every gap MUST quote the topic text that creates it.\n"
             "Return ONLY JSON with keys: "
             '{"signal": "green|yellow|red", "quick_take": string, '
             '"maps_to_canari": true|false, '
+            '"requirements": [{"need": string, "where": "objective|description|keywords", "evidence": string, "status": "meets|partial|gap"}], '
             '"objective_matches": [string], "gaps": [string], "confidence": 0-100}.'
         ),
     },
@@ -40,8 +45,14 @@ AGENTS: dict[str, dict[str, str]] = {
             "Map the required technical work to capabilities VEIN actually ships and skills "
             "we can actually show. Do not invent features. Do not grade the sponsoring "
             "branch's mission.\n"
+            "For EACH major required capability in THIS topic, add a `requirements` entry "
+            "that quotes the exact phrase from the topic stating it (evidence), names where "
+            "it appears (objective|description|keywords), and rates status meets|partial|gap. "
+            "Every capability gap MUST quote the topic text that creates it.\n"
             "Return ONLY JSON with keys: "
-            '{"technical_summary": string, "capability_matches": [string], '
+            '{"technical_summary": string, '
+            '"requirements": [{"need": string, "where": "objective|description|keywords", "evidence": string, "status": "meets|partial|gap"}], '
+            '"capability_matches": [string], '
             '"capability_gaps": [string], "suggested_approach": [string], '
             '"technical_risk": "low|medium|high", "technical_fit_score": 0-100}.'
         ),
@@ -134,8 +145,13 @@ AGENTS: dict[str, dict[str, str]] = {
             "Your only job: look at Davy's own capabilities and decide whether they meet THIS "
             "SBIR's objectives. If the topic is not about voice C2, spoken command, hands-busy "
             "control, or that class of operator interface, say so.\n"
+            "For EACH major requirement in THIS topic, add a `requirements` entry that "
+            "quotes the exact phrase from the topic stating it (evidence), names where it "
+            "appears (objective|description|keywords), and rates status meets|partial|gap. "
+            "Every gap MUST quote the topic text that creates it.\n"
             "Return ONLY JSON with keys: "
             '{"signal": "green|yellow|red", "quick_take": string, '
+            '"requirements": [{"need": string, "where": "objective|description|keywords", "evidence": string, "status": "meets|partial|gap"}], '
             '"capabilities_in_play": [string], "objective_matches": [string], '
             '"gaps": [string], "confidence": 0-100}.'
         ),
@@ -251,7 +267,14 @@ def _agent_prompt(topic_text: str, resume_text: str, extra: str = "") -> str:
 
 # ---- Orchestration -------------------------------------------------------
 
-async def run_single_agent(name: str, topic_text: str, resume_text: str, extra: str = "") -> dict[str, Any]:
+async def run_single_agent(
+    name: str,
+    topic_text: str,
+    resume_text: str,
+    extra: str = "",
+    *,
+    model: Optional[str] = None,
+) -> dict[str, Any]:
     name = canonical_agent(name)
     spec = AGENTS[name]
     try:
@@ -265,6 +288,7 @@ async def run_single_agent(name: str, topic_text: str, resume_text: str, extra: 
         _agent_prompt(topic_text, resume_text, extra),
         temperature=temperature,
         format_json=True,
+        model=model,
     )
     result = _safe_json(out)
     result["_role"] = spec["role"]

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     ollama_fallback_model: str = "llama3.1:8b"
     ollama_embed_model: str = "nomic-embed-text"
     ollama_timeout: float = 600.0
+    # Hard cap on generated tokens per LLM call. Prevents small models from
+    # running away (never emitting a stop token) and blowing the timeout.
+    # Normal agent outputs are a few hundred tokens; 2048 is ample headroom.
+    ollama_num_predict: int = 2048
     catalog_page_size: int = 50
     catalog_max_pages: int = 40
     catalog_enrich_per_pass: int = 0  # 0 = every open topic (LLM details pass)

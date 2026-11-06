@@ -159,7 +159,10 @@ async def chat_messages(
         "model": mdl,
         "messages": messages,
         "stream": False,
-        "options": {"temperature": temperature},
+        "options": {
+            "temperature": temperature,
+            "num_predict": settings.ollama_num_predict,
+        },
     }
     if format_json:
         body["format"] = "json"
@@ -202,7 +205,10 @@ async def chat_stream_messages(
         "model": mdl,
         "messages": messages,
         "stream": True,
-        "options": {"temperature": temperature},
+        "options": {
+            "temperature": temperature,
+            "num_predict": settings.ollama_num_predict,
+        },
     }
     async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=settings.ollama_timeout) as c:
         async with c.stream("POST", "/api/chat", json=body) as resp:

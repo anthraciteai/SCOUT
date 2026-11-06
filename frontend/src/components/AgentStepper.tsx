@@ -5,11 +5,12 @@ import { topicMeta } from "../pages/Browse";
 import HewerCard, { liftColor } from "./HewerCard";
 import TeamCard from "./TeamCard";
 import FlintCard, { type FlintResult } from "./FlintCard";
-import AgentChat from "./AgentChat";
+import ChatDrawer from "./ChatDrawer";
 import {
   AGENTS,
   COLORS,
   CONTRIBUTES,
+  ORDER,
   PRODUCT_VOICES,
   ROLES,
   SLICES,
@@ -52,27 +53,281 @@ function AgentPill({
   );
 }
 
-function GenericResult({ data }: { data: AgentResult }) {
+// A verdict word derived from the agent's signal / risk rating.
+const SIGNAL_META: Record<string, { label: string; color: string }> = {
+  green: { label: "Strong fit", color: "#35d07f" },
+  yellow: { label: "Partial fit", color: "#ffc24b" },
+  red: { label: "Weak fit", color: "#e0704f" },
+  low: { label: "Low risk", color: "#35d07f" },
+  medium: { label: "Some risk", color: "#ffc24b" },
+  high: { label: "High risk", color: "#e0704f" },
+};
+
+// Per-requirement status → badge label + color.
+const REQ_STATUS: Record<string, { label: string; color: string }> = {
+  meets: { label: "Meets", color: "#35d07f" },
+  partial: { label: "Partial", color: "#ffc24b" },
+  gap: { label: "Gap", color: "#ff5d5d" },
+};
+
+// Fields that carry the agent's core reasoning — this is the "why".
+const WHY_KEYS = [
+  "quick_take",
+  "technical_summary",
+  "rationale",
+  "lift_rationale",
+  "decision_summary",
+  "strategic_value",
+  "persona_read",
+];
+
+// Arrays framed as positives, shown up front.
+const STRENGTH_LABELS: Record<string, string> = {
+  objective_matches: "Where it lines up",
+  capability_matches: "Capabilities that fit",
+  capabilities_in_play: "Capabilities in play",
+  reuse_as_is: "Reuse as-is",
+  top_strengths: "Top strengths",
+  covered_by_you: "Already covered by you",
+  suggested_approach: "Suggested approach",
+};
+
+// Arrays framed as caveats — tucked into a collapsed section, not alarming.
+const CAVEAT_LABELS: Record<string, string> = {
+  gaps: "Gaps to close",
+  capability_gaps: "Capability gaps",
+  top_risks: "Watch-outs",
+  risks: "Watch-outs",
+  do_not_fake: "Don’t overclaim",
+};
+
+// Scalar prose fields worth a label.
+const PROSE_LABELS: Record<string, string> = {
+  customer_need: "Customer need",
+  competition_landscape: "Competition",
+  transition_path: "Transition path",
+  notes: "Notes",
+};
+
+// Numeric scores rendered as small chips.
+const SCORE_LABELS: Record<string, string> = {
+  confidence: "confidence",
+  technical_fit_score: "fit",
+  win_probability: "win prob",
+  fit_score: "fit",
+};
+
+function asList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (typeof x === "object" && x ? JSON.stringify(x) : String(x)))
+    .filter((s) => s && s !== "null" && s !== "undefined");
+}
+
+/** Human-friendly result: verdict + a prominent "Why", strengths, then caveats. */
+function SmartResult({ name, data }: { name: string; data: AgentResult }) {
   if (data?.raw) return <pre className="stream">{String(data.raw)}</pre>;
+  const d = data as Record<string, unknown>;
+
+  const signal = typeof d.signal === "string" ? (d.signal as string).toLowerCase() : "";
+  const sig = SIGNAL_META[signal];
+  const mapsBool = typeof d.maps_to_canari === "boolean" ? (d.maps_to_canari as boolean) : undefined;
+  const recommendation = typeof d.recommendation === "string" ? (d.recommendation as string) : "";
+  const risk = typeof d.technical_risk === "string" ? (d.technical_risk as string) : "";
+  const riskMeta = risk ? SIGNAL_META[risk.toLowerCase()] : undefined;
+
+  const whyKey = WHY_KEYS.find((k) => typeof d[k] === "string" && (d[k] as string).trim());
+  const why = whyKey ? String(d[whyKey]) : "";
+
+  // Requirement-by-requirement grounding: each need cites the SBIR text (evidence)
+  // and where it appears, so gaps point at the exact part of the topic.
+  const requirements = Array.isArray(d.requirements)
+    ? (d.requirements as Record<string, unknown>[]).filter((r) => r && typeof r === "object")
+    : [];
+
+  const scoreChips = Object.entries(SCORE_LABELS)
+    .filter(([k]) => typeof d[k] === "number")
+    .map(([k, lbl]) => `${d[k]} ${lbl}`);
+
+  const verdictLabel =
+    sig?.label ||
+    (mapsBool === true ? "Maps" : mapsBool === false ? "Doesn’t map" : "") ||
+    recommendation;
+  const verdictColor =
+    sig?.color ||
+    (mapsBool === true ? "#35d07f" : mapsBool === false ? "#e0704f" : COLORS[name as AgentName] || "#8a7bff");
+
+  const handled = new Set<string>([
+    "_role",
+    "signal",
+    "maps_to_canari",
+    "recommendation",
+    "technical_risk",
+    "requirements",
+    ...(whyKey ? [whyKey] : []),
+    ...Object.keys(SCORE_LABELS),
+  ]);
+  // When we have grounded requirements, they subsume the flat match/gap lists.
+  if (requirements.length) {
+    ["objective_matches", "capability_matches", "gaps", "capability_gaps"].forEach((k) =>
+      handled.add(k),
+    );
+  }
+
+  const strengths = Object.entries(STRENGTH_LABELS)
+    .map(([k, lbl]) => {
+      handled.add(k);
+      return { lbl, items: asList(d[k]) };
+    })
+    .filter((s) => s.items.length);
+
+  const caveats = Object.entries(CAVEAT_LABELS)
+    .map(([k, lbl]) => {
+      handled.add(k);
+      return { lbl, items: asList(d[k]) };
+    })
+    .filter((s) => s.items.length);
+
+  const prose = Object.entries(PROSE_LABELS)
+    .map(([k, lbl]) => {
+      handled.add(k);
+      const v = d[k];
+      return { lbl, text: typeof v === "string" ? v.trim() : "" };
+    })
+    .filter((p) => p.text);
+
+  // Keep anything we didn't explicitly place, but quietly at the end.
+  const leftover = Object.entries(d).filter(
+    ([k, v]) => !handled.has(k) && v != null && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
+
   return (
-    <>
-      {Object.entries(data)
-        .filter(([k]) => k !== "_role")
-        .map(([k, v]) => (
-          <div key={k} style={{ marginBottom: 6 }}>
-            <div className="kv">{k.replace(/_/g, " ")}</div>
-            {Array.isArray(v) ? (
+    <div className="agent-why">
+      {(verdictLabel || riskMeta || scoreChips.length > 0) && (
+        <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {verdictLabel && (
+            <span
+              className="tag"
+              style={{
+                background: `${verdictColor}22`,
+                borderColor: verdictColor,
+                color: verdictColor,
+                fontWeight: 600,
+              }}
+            >
+              {verdictLabel}
+            </span>
+          )}
+          {riskMeta && (
+            <span className="tag" style={{ borderColor: riskMeta.color, color: riskMeta.color }}>
+              {riskMeta.label}
+            </span>
+          )}
+          {scoreChips.map((c) => (
+            <span key={c} className="meta">
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {why && (
+        <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.5 }}>
+          <strong className="meta">Why: </strong>
+          {why}
+        </p>
+      )}
+
+      {requirements.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div className="kv">Requirements ↔ {name} (from the SBIR)</div>
+          <div className="req-list">
+            {requirements.map((r, i) => {
+              const status = String(r.status || "").toLowerCase();
+              const sm = REQ_STATUS[status] || REQ_STATUS.partial;
+              const evidence = typeof r.evidence === "string" ? r.evidence.trim() : "";
+              const where = typeof r.where === "string" ? r.where.trim() : "";
+              const need =
+                (typeof r.need === "string" && r.need) ||
+                (typeof r.point === "string" && r.point) ||
+                "";
+              return (
+                <div key={i} className="req-row">
+                  <span
+                    className="req-badge"
+                    style={{ background: `${sm.color}22`, borderColor: sm.color, color: sm.color }}
+                  >
+                    {sm.label}
+                  </span>
+                  <div className="req-body">
+                    <div className="req-need">{String(need)}</div>
+                    {evidence && (
+                      <div className="req-evi">
+                        “{evidence}”
+                        {where && <span className="meta"> — {where}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {strengths.map((s) => (
+        <div key={s.lbl} style={{ marginTop: 10 }}>
+          <div className="kv">{s.lbl}</div>
+          <ul className="tight">
+            {s.items.map((x, i) => (
+              <li key={i}>{x}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      {prose.map((p) => (
+        <div key={p.lbl} style={{ marginTop: 10 }}>
+          <div className="kv">{p.lbl}</div>
+          <div style={{ fontSize: 13 }}>{p.text}</div>
+        </div>
+      ))}
+
+      {caveats.length > 0 && (
+        <details style={{ marginTop: 10 }}>
+          <summary className="meta" style={{ cursor: "pointer" }}>
+            Caveats ({caveats.reduce((n, c) => n + c.items.length, 0)})
+          </summary>
+          {caveats.map((c) => (
+            <div key={c.lbl} style={{ marginTop: 6 }}>
+              <div className="kv">{c.lbl}</div>
               <ul className="tight">
-                {v.map((x, i) => (
-                  <li key={i}>{typeof x === "object" ? JSON.stringify(x) : String(x)}</li>
+                {c.items.map((x, i) => (
+                  <li key={i}>{x}</li>
                 ))}
               </ul>
-            ) : (
-              <div style={{ fontSize: 13 }}>{String(v)}</div>
-            )}
-          </div>
-        ))}
-    </>
+            </div>
+          ))}
+        </details>
+      )}
+
+      {leftover.map(([k, v]) => (
+        <div key={k} style={{ marginTop: 10 }}>
+          <div className="kv">{k.replace(/_/g, " ")}</div>
+          {Array.isArray(v) ? (
+            <ul className="tight">
+              {asList(v).map((x, i) => (
+                <li key={i}>{x}</li>
+              ))}
+            </ul>
+          ) : (
+            <div style={{ fontSize: 13 }}>
+              {typeof v === "object" ? JSON.stringify(v) : String(v)}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -80,7 +335,7 @@ function renderAgent(name: string, data: AgentResult) {
   if (name === "Hewer") return <HewerCard rec={data as HewerResult} />;
   if (name === "Collier") return <TeamCard rec={data as TeamRecommendation} />;
   if (name === "Flint") return <FlintCard rec={data as FlintResult} />;
-  return <GenericResult data={data} />;
+  return <SmartResult name={name} data={data} />;
 }
 
 export default function AgentStepper({
@@ -96,6 +351,7 @@ export default function AgentStepper({
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [runningAll, setRunningAll] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<AgentName>("Canari");
   const [focus, setFocus] = useState<SliceId | ContributeId | null>("objective");
@@ -294,13 +550,22 @@ export default function AgentStepper({
                 <strong>{selected}</strong>
                 <span className="meta">· {ROLES[selected]}</span>
               </div>
-              <button
-                className="ghost small"
-                onClick={() => runOne(selected)}
-                disabled={running || runningAll}
-              >
-                {running ? "Running…" : data ? "Re-run" : "Run"}
-              </button>
+              <div className="row" style={{ gap: 6 }}>
+                <button
+                  className="ghost small"
+                  onClick={() => setChatOpen(true)}
+                  title={`Open a chat with ${selected}`}
+                >
+                  Discuss response
+                </button>
+                <button
+                  className="small"
+                  onClick={() => runOne(selected)}
+                  disabled={running || runningAll}
+                >
+                  {running ? "Running…" : data ? "Re-run" : "Run"}
+                </button>
+              </div>
             </div>
             <p className="meta" style={{ margin: "8px 0 0" }}>
               {spec.because}
@@ -334,12 +599,17 @@ export default function AgentStepper({
             </div>
 
             {data && <div style={{ marginTop: 12 }}>{renderAgent(selected, data)}</div>}
-            <div style={{ marginTop: 10 }}>
-              <AgentChat topicId={topicId} agent={selected} topicsMeta={meta} compact />
-            </div>
           </div>
         </div>
       </div>
+
+      <ChatDrawer
+        open={chatOpen}
+        topicId={topicId}
+        agent={selected}
+        topicsMeta={meta}
+        onClose={() => setChatOpen(false)}
+      />
     </div>
   );
 }
