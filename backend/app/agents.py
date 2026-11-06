@@ -196,6 +196,77 @@ COUNCIL_SYSTEM = (
 )
 
 
+# The one-shot "which product should we bid, why, what's the work, and where are
+# we on TRL" synthesis. Reads the per-PRODUCT assessments + Hewer's lift notes.
+BRIEF_SYSTEM = (
+    "You are the SCOUT bid chair. You are given a DoD SBIR/STTR topic, the applicant's ME "
+    "resume + company products, structured per-PRODUCT assessments (Canari = aircraft-health "
+    "/ PX4 ULog scoring; Vein = fleet C2 / COP / TAK; Davy = voice-activated C2), and Hewer's "
+    "lift/adaptation notes.\n"
+    "Produce a single, decisive bid brief:\n"
+    "1. recommended_product: pick EXACTLY ONE of Canari, Vein, Davy — or 'none' if no product "
+    "is a credible fit. Base it on the per-product requirements: the product with the most "
+    "'meets' on the topic's CORE objective wins. Never pick a product the topic clearly is not "
+    "about (e.g. do not pick Canari for a pure voice-C2 topic).\n"
+    "2. why: 2-4 plain sentences a capture lead could say out loud — name the product and the "
+    "specific objective it lines up with.\n"
+    "3. work_to_do: 3-7 concrete, ORDERED steps to close the gaps and deliver a Phase I. Reuse "
+    "Hewer's adaptation plan where it fits. No fluff.\n"
+    "4. TRL (standard DoD 1-9): 1 basic principles; 2 concept; 3 proof-of-concept; 4 lab "
+    "validation; 5 validation in a relevant environment; 6 prototype demo in a relevant "
+    "environment; 7 prototype in an operational environment; 8 system complete & qualified; "
+    "9 proven in operations. trl_current = where the chosen product's capability HONESTLY sits "
+    "today for THIS topic's need. trl_target = the TRL a Phase I (or Phase I->II) would "
+    "realistically reach. trl_rationale must name what already exists vs. what is missing.\n"
+    "Return ONLY JSON with keys: "
+    '{"recommended_product": "Canari|Vein|Davy|none", '
+    '"recommendation": "GO|LEAN GO|LEAN NO-GO|NO-GO", '
+    '"headline": string, "why": string, '
+    '"work_to_do": [string], "key_gaps": [string], '
+    '"trl_current": 1-9, "trl_target": 1-9, "trl_rationale": string, '
+    '"confidence": 0-100, '
+    '"runners_up": [{"product": string, "note": string}]}.'
+)
+
+_BRIEF_PRODUCTS = ("Canari", "Vein", "Davy")
+
+
+def _clamp_trl(v: Any, default: int) -> int:
+    try:
+        n = int(round(float(v)))
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(9, n))
+
+
+def _normalize_brief(brief: dict[str, Any], products: dict[str, Any]) -> dict[str, Any]:
+    """Keep the model honest: a real product name, sane TRLs, clamped score."""
+    if not isinstance(brief, dict) or brief.get("raw"):
+        return brief if isinstance(brief, dict) else {"raw": str(brief)}
+    rp = str(brief.get("recommended_product") or "").strip()
+    rp_canon = next((p for p in _BRIEF_PRODUCTS if p.lower() == rp.lower()), None)
+    brief["recommended_product"] = rp_canon or ("none" if rp.lower() in ("", "none") else rp)
+    cur = _clamp_trl(brief.get("trl_current"), 3)
+    tgt = _clamp_trl(brief.get("trl_target"), max(cur, 4))
+    brief["trl_current"] = cur
+    brief["trl_target"] = max(cur, tgt)  # target can't be below where we are
+    try:
+        brief["confidence"] = max(0, min(100, int(round(float(brief.get("confidence") or 0)))))
+    except (TypeError, ValueError):
+        brief["confidence"] = 0
+    # Surface each product's own signal/fit so the UI can show the comparison.
+    signals: dict[str, Any] = {}
+    for name, res in products.items():
+        if isinstance(res, dict):
+            signals[name] = {
+                "signal": res.get("signal"),
+                "maps": res.get("maps_to_canari"),
+                "fit": res.get("technical_fit_score") or res.get("confidence"),
+            }
+    brief["product_signals"] = signals
+    return brief
+
+
 # ---- Helpers -------------------------------------------------------------
 
 def _safe_json(text: str) -> dict[str, Any]:
@@ -341,6 +412,44 @@ async def analyze_topic(topic: dict[str, Any], resume_text: str) -> dict[str, An
     council = _safe_json(council_out)
 
     return {"agents": agents, "council": council, "model": model}
+
+
+async def bid_brief(topic: dict[str, Any], resume_text: str) -> dict[str, Any]:
+    """One-shot decision brief: which product to bid, why, the work, and TRL.
+
+    Runs the three product voices + Hewer (lift), then a single chair synthesis.
+    Reports coarse progress via the job registry so the UI bar can track it.
+    Returns {brief, products, hewer, model}."""
+    from . import jobs  # local import avoids an import cycle
+
+    model = await ollama_client.resolve_model()
+    topic_text = summarize_topic(topic)
+
+    jobs.progress("Canari — does the health product map?", 14)
+    canari = await run_single_agent("Canari", topic_text, resume_text)
+    jobs.progress("Vein — does the C2/COP product fit?", 30)
+    vein = await run_single_agent("Vein", topic_text, resume_text)
+    jobs.progress("Davy — does voice-C2 meet the objective?", 46)
+    davy = await run_single_agent("Davy", topic_text, resume_text)
+
+    jobs.progress("Hewer — lift & adaptation to deliver…", 62)
+    hewer = await run_single_agent(
+        "Hewer", topic_text, resume_text,
+        extra="\n\nTECHNICAL NOTES (from Vein):\n" + json.dumps(vein)[:1500],
+    )
+
+    products = {"Canari": canari, "Vein": vein, "Davy": davy}
+    jobs.progress("Picking the best bid + scoring TRL…", 86)
+    brief_prompt = (
+        _agent_prompt(topic_text, resume_text)
+        + "\n\nPER-PRODUCT ASSESSMENTS:\n"
+        + json.dumps(products)[:5000]
+        + "\n\nHEWER LIFT / ADAPTATION NOTES:\n"
+        + json.dumps(hewer)[:2000]
+    )
+    out = await ollama_client.chat(BRIEF_SYSTEM, brief_prompt, temperature=0.2, format_json=True)
+    brief = _normalize_brief(_safe_json(out), products)
+    return {"brief": brief, "products": products, "hewer": hewer, "model": model}
 
 
 async def recommend_team(

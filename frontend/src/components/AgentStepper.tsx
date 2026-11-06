@@ -6,6 +6,7 @@ import HewerCard, { liftColor } from "./HewerCard";
 import TeamCard from "./TeamCard";
 import FlintCard, { type FlintResult } from "./FlintCard";
 import ChatDrawer from "./ChatDrawer";
+import BidBrief from "./BidBrief";
 import {
   AGENTS,
   COLORS,
@@ -450,9 +451,11 @@ export default function AgentStepper({
 
   return (
     <div className="card agent-workspace">
-      <div className="row spread">
+      <BidBrief topicId={topicId} topicsMeta={meta} />
+
+      <div className="mt-6 mb-1 flex items-center justify-between gap-4 border-t border-hair pt-5">
         <div>
-          <h3 style={{ margin: 0 }}>Agent workspace</h3>
+          <h3 style={{ margin: 0 }}>Or work it voice-by-voice</h3>
           <div className="meta">
             Canari, Vein, and Davy each ask whether that product maps to this SBIR. They
             read the topic and our products.md — not a branch-mission gate.

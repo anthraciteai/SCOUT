@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from .. import agents, collab, dsip
+from .. import agents, collab, dsip, jobs
 from ..db import get_session
 from ..identity import Identity, current_identity, get_identity
 from ..models import AnalysisRun
@@ -479,6 +479,106 @@ def latest_for_topic(topic_id: str, session: Session = Depends(get_session)):
     if not run:
         raise HTTPException(status_code=404, detail="No analysis for this topic")
     return _serialize(run)
+
+
+class BriefRequest(BaseModel):
+    topic_id: str
+    resume_id: Optional[int] = None
+    force: bool = False
+    topics_meta: Optional[dict[str, dict]] = None
+
+
+def _brief_owner(ident: Optional[Identity]) -> str:
+    cid = (ident.company_id if ident else None) or "shared"
+    uid = (ident.user_id if ident else None) or "shared"
+    return f"{cid}:{uid}"
+
+
+def _brief_cached(topic_id: str, ident: Optional[Identity]) -> Optional[dict]:
+    if not ident:
+        return None
+    vault = get_vault()
+    cached = vault.cache_get(vault.user_path(topic_id, ident, "brief.json"))
+    if cached and cached.get("result"):
+        out = dict(cached["result"])
+        out["cached"] = True
+        out["cached_at"] = cached.get("cached_at")
+        return out
+    return None
+
+
+@router.post("/brief")
+async def run_brief(req: BriefRequest, session: Session = Depends(get_session)):
+    """One-shot bid brief: which product to bid, why, the work, and TRL.
+
+    Runs the product voices + Hewer + a chair synthesis as a single tracked job
+    (deduped + reconnectable progress, survives leaving the page), and caches the
+    brief per user in the vault."""
+    _, resume_text = get_resume_text(session, req.resume_id)
+    try:
+        topic = await dsip.get_topic(req.topic_id)
+    except Exception:
+        topic = {"topicId": req.topic_id}
+    if isinstance(topic, dict) and "topic" in topic and isinstance(topic["topic"], dict):
+        topic = {**topic, **topic["topic"]}
+    topic = _merge_meta(topic, (req.topics_meta or {}).get(req.topic_id))
+
+    ident = current_identity()
+    vault = get_vault()
+    if ident:
+        vault.grant_sbir(
+            ident,
+            req.topic_id,
+            {
+                "topic_id": req.topic_id,
+                "title": topic.get("topicTitle") or topic.get("title"),
+                "topic_code": topic.get("topicCode") or topic.get("finalTopicCode"),
+            },
+        )
+        if not req.force:
+            cached = _brief_cached(req.topic_id, ident)
+            if cached:
+                return cached
+
+    async def work():
+        result = await agents.bid_brief(topic, resume_text)
+        if ident:
+            vault.cache_put(
+                vault.user_path(req.topic_id, ident, "brief.json"),
+                {"result": result},
+                result.get("model", ""),
+                "brief",
+            )
+        return result
+
+    job = jobs.start("brief", req.topic_id, _brief_owner(ident), work, identity=ident)
+    await job.task
+    if job.state == "error":
+        raise HTTPException(status_code=502, detail=job.error or "Bid brief failed")
+    out = dict(job.result or {})
+    out["cached"] = False
+    return out
+
+
+@router.get("/brief/{topic_id}/status")
+async def brief_status(topic_id: str):
+    """Progress of the caller's in-flight (or just-finished) bid brief."""
+    ident = current_identity()
+    job = jobs.get("brief", topic_id, _brief_owner(ident))
+    if job is not None:
+        out = job.public()
+        out["result"] = job.result if job.state == "done" else None
+        return out
+    cached = _brief_cached(topic_id, ident)
+    if cached:
+        return {"state": "done", "stage": "done", "pct": 100, "result": cached}
+    return {"state": "idle", "stage": "idle", "pct": 0, "result": None}
+
+
+@router.get("/brief/{topic_id}")
+async def brief_cached(topic_id: str):
+    """The caller's cached bid brief (no model call); null if not run yet."""
+    return _brief_cached(topic_id, current_identity())
 
 
 @router.get("/{run_id}")

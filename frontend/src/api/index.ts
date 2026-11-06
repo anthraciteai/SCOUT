@@ -140,6 +140,32 @@ export interface TopicMeta {
   solicitation_title?: string;
 }
 
+// One-shot bid decision: which product to bid, why, the work, and TRL.
+export interface BidBrief {
+  recommended_product: string;
+  recommendation: string;
+  headline?: string;
+  why?: string;
+  work_to_do?: string[];
+  key_gaps?: string[];
+  trl_current?: number;
+  trl_target?: number;
+  trl_rationale?: string;
+  confidence?: number;
+  runners_up?: { product: string; note: string }[];
+  product_signals?: Record<string, { signal?: string; maps?: boolean; fit?: number }>;
+  raw?: string;
+}
+
+export interface BidBriefResponse {
+  brief: BidBrief;
+  products?: Record<string, unknown>;
+  hewer?: unknown;
+  model?: string;
+  cached?: boolean;
+  cached_at?: string;
+}
+
 export const AnalysisApi = {
   run: (
     topic_ids: string[],
@@ -155,6 +181,18 @@ export const AnalysisApi = {
   latestForTopic: (topicId: string) =>
     api.get<AnalysisRun>(`/analysis/topic/${topicId}`).then((r) => r.data),
   agentNames: () => api.get<AgentMeta[]>("/analysis/agents").then((r) => r.data),
+  // One-shot bid brief (best product + why + work-to-do + TRL). Runs as a
+  // tracked job; progress via briefStatus, cached result via briefCached.
+  brief: (topic_id: string, topics_meta?: Record<string, TopicMeta>, force = false) =>
+    api
+      .post<BidBriefResponse>("/analysis/brief", { topic_id, topics_meta, force })
+      .then((r) => r.data),
+  briefCached: (topic_id: string) =>
+    api.get<BidBriefResponse | null>(`/analysis/brief/${topic_id}`).then((r) => r.data),
+  briefStatus: (topic_id: string) =>
+    api
+      .get<JobStatus<BidBriefResponse>>(`/analysis/brief/${topic_id}/status`)
+      .then((r) => r.data),
   runAgent: (
     topic_id: string,
     agent: string,
