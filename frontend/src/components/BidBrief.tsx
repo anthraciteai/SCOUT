@@ -1,7 +1,95 @@
 import { useEffect, useState } from "react";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { AnalysisApi, type BidBriefResponse, type TopicMeta } from "../api";
 import { COLORS, ROLES, type AgentName } from "./agentWorkspace";
 import JobProgress, { useJobPoll } from "./JobProgress";
+
+/** Donut comparing each product's odds of actually completing the SBIR. The
+ *  recommended product's slice is solid; the others dim so the winner pops. */
+function ProductOdds({
+  odds,
+  recommended,
+}: {
+  odds: Record<string, number>;
+  recommended: string;
+}) {
+  const order: AgentName[] = ["Canari", "Vein", "Davy"];
+  const entries = order.map((p) => ({
+    name: p,
+    value: Math.max(0, Math.round(odds[p] ?? 0)),
+    color: COLORS[p] || "#8a7bff",
+  }));
+  const shown = entries.filter((e) => e.value > 0);
+  const rec = recommended && recommended.toLowerCase() !== "none" ? recommended : "";
+  const top = entries.reduce((a, b) => (b.value > a.value ? b : a), entries[0]);
+  const centerName = rec || top.name;
+  const centerVal = Math.round(odds[centerName] ?? top.value ?? 0);
+  const centerColor = COLORS[centerName as AgentName] || "#ff7a1a";
+
+  return (
+    <div className="w-full rounded-xl border border-hair bg-bg2/40 p-3.5 lg:w-[250px]">
+      <div className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-faint">
+        Odds to complete this SBIR
+      </div>
+      <div className="relative mx-auto mt-1" style={{ width: 168, height: 148 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Tooltip
+              contentStyle={{
+                background: "#1a1a20",
+                border: "1px solid #2a2a34",
+                borderRadius: 6,
+                fontSize: 12,
+                color: "#e6e6ea",
+              }}
+              formatter={(v: number, n: string) => [`${v}% to complete`, n]}
+            />
+            <Pie
+              data={shown.length ? shown : [{ name: "none", value: 1, color: "#3a3a44" }]}
+              dataKey="value"
+              cx="50%"
+              cy="50%"
+              innerRadius={46}
+              outerRadius={70}
+              paddingAngle={shown.length > 1 ? 3 : 0}
+              stroke="none"
+              startAngle={90}
+              endAngle={-270}
+            >
+              {(shown.length ? shown : [{ name: "none", color: "#3a3a44" }]).map((d, i) => (
+                <Cell key={i} fill={d.color} opacity={rec && d.name !== rec ? 0.45 : 1} />
+              ))}
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <div className="text-[26px] font-bold leading-none" style={{ color: centerColor }}>
+            {centerVal}%
+          </div>
+          <div className="text-[11px] text-muted">{centerName || "—"}</div>
+        </div>
+      </div>
+      <div className="mt-1 flex flex-col gap-1">
+        {entries.map((e) => (
+          <div key={e.name} className="flex items-center justify-between text-[12px]">
+            <span className="flex items-center gap-2">
+              <span
+                className="h-2.5 w-2.5 rounded-sm"
+                style={{ background: e.color, opacity: rec && e.name !== rec ? 0.45 : 1 }}
+              />
+              <span className={rec === e.name ? "font-semibold text-ink" : "text-muted"}>
+                {e.name}
+              </span>
+            </span>
+            <span className={rec === e.name ? "font-semibold text-ink" : "text-muted"}>
+              {e.value}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function recColor(rec?: string) {
   const v = (rec || "").toUpperCase();
@@ -53,14 +141,24 @@ function TrlMeter({ current, target }: { current: number; target: number }) {
 export default function BidBrief({
   topicId,
   topicsMeta,
+  onPick,
 }: {
   topicId: string;
   topicsMeta?: Record<string, TopicMeta>;
+  onPick?: (product: string) => void;
 }) {
   const [resp, setResp] = useState<BidBriefResponse | null>(null);
   const [active, setActive] = useState(false);
   const [err, setErr] = useState("");
   const job = useJobPoll<BidBriefResponse>(() => AnalysisApi.briefStatus(topicId), active);
+
+  // Flow the verdict into the drill-down below: once a brief names a product,
+  // pre-select that voice so "dig deeper" starts on the recommended one.
+  useEffect(() => {
+    const p = resp?.brief?.recommended_product;
+    if (p && p.toLowerCase() !== "none") onPick?.(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resp?.brief?.recommended_product]);
 
   // Reconnect: show a cached brief instantly, and reattach to one already
   // running on the server (another tab / after a reload).
@@ -159,6 +257,8 @@ export default function BidBrief({
 
       {brief && !brief.raw && (
         <div className="mt-4 flex flex-col gap-4">
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+          <div className="flex flex-col gap-3">
           {/* verdict line */}
           <div className="flex flex-wrap items-center gap-2.5">
             {isProduct ? (
@@ -193,6 +293,12 @@ export default function BidBrief({
           </div>
 
           {brief.why && <p className="m-0 text-[14.5px] leading-relaxed">{brief.why}</p>}
+          </div>
+          {brief.completion_odds &&
+            Object.values(brief.completion_odds).some((v) => v > 0) && (
+              <ProductOdds odds={brief.completion_odds} recommended={product} />
+            )}
+          </div>
 
           {/* TRL */}
           {(brief.trl_current || brief.trl_target) && (

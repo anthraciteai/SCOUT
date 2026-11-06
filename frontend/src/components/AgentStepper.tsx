@@ -451,7 +451,11 @@ export default function AgentStepper({
 
   return (
     <div className="card agent-workspace">
-      <BidBrief topicId={topicId} topicsMeta={meta} />
+      <BidBrief
+        topicId={topicId}
+        topicsMeta={meta}
+        onPick={(p) => setSelected(p as AgentName)}
+      />
 
       <div className="mt-6 mb-1 flex items-center justify-between gap-4 border-t border-hair pt-5">
         <div>

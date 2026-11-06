@@ -218,6 +218,10 @@ BRIEF_SYSTEM = (
     "9 proven in operations. trl_current = where the chosen product's capability HONESTLY sits "
     "today for THIS topic's need. trl_target = the TRL a Phase I (or Phase I->II) would "
     "realistically reach. trl_rationale must name what already exists vs. what is missing.\n"
+    "5. completion_odds: for EACH product (Canari, Vein, Davy) give your honest probability "
+    "0-100 that THAT product could actually COMPLETE this SBIR — win Phase I and deliver — "
+    "given its fit, the lift to adapt it, and the TRL gap. These are INDEPENDENT estimates "
+    "(they need not sum to 100). The recommended_product must have the highest number.\n"
     "Return ONLY JSON with keys: "
     '{"recommended_product": "Canari|Vein|Davy|none", '
     '"recommendation": "GO|LEAN GO|LEAN NO-GO|NO-GO", '
@@ -225,6 +229,7 @@ BRIEF_SYSTEM = (
     '"work_to_do": [string], "key_gaps": [string], '
     '"trl_current": 1-9, "trl_target": 1-9, "trl_rationale": string, '
     '"confidence": 0-100, '
+    '"completion_odds": {"Canari": 0-100, "Vein": 0-100, "Davy": 0-100}, '
     '"runners_up": [{"product": string, "note": string}]}.'
 )
 
@@ -264,6 +269,20 @@ def _normalize_brief(brief: dict[str, Any], products: dict[str, Any]) -> dict[st
                 "fit": res.get("technical_fit_score") or res.get("confidence"),
             }
     brief["product_signals"] = signals
+
+    # Completion odds drive the comparison donut. Clamp to 0-100 and, when the
+    # model omits a product, fall back to that product's own fit/confidence.
+    raw_odds = brief.get("completion_odds") if isinstance(brief.get("completion_odds"), dict) else {}
+    odds: dict[str, int] = {}
+    for p in _BRIEF_PRODUCTS:
+        v = raw_odds.get(p)
+        if v is None:
+            v = (signals.get(p) or {}).get("fit")
+        try:
+            odds[p] = max(0, min(100, int(round(float(v)))))
+        except (TypeError, ValueError):
+            odds[p] = 0
+    brief["completion_odds"] = odds
     return brief
 
 

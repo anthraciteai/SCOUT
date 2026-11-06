@@ -152,6 +152,7 @@ export interface BidBrief {
   trl_target?: number;
   trl_rationale?: string;
   confidence?: number;
+  completion_odds?: Record<string, number>;
   runners_up?: { product: string; note: string }[];
   product_signals?: Record<string, { signal?: string; maps?: boolean; fit?: number }>;
   raw?: string;
