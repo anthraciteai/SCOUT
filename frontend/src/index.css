@@ -344,29 +344,35 @@
     overflow-y: auto;
   }
   .doc-slice {
-    @apply block w-full text-left bg-surface2 text-ink rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors;
+    @apply block w-full text-left bg-surface2/60 text-ink rounded-xl px-3.5 py-3 cursor-pointer transition-all duration-200;
     border: 1px solid var(--border);
   }
   .doc-slice:hover {
+    @apply bg-surface2;
     border-color: var(--border-strong);
   }
   .doc-slice p {
-    @apply mt-1.5 mb-0 text-[13px] text-ink font-normal;
-    line-height: 1.5;
+    @apply mt-1.5 mb-0 text-[12.5px] text-muted font-normal;
+    line-height: 1.55;
   }
   .doc-slice.cited {
-    border-color: var(--ember);
-    background: rgba(255, 122, 26, 0.04);
+    border-color: rgba(255, 122, 26, 0.45);
+    background: rgba(255, 122, 26, 0.05);
   }
   .doc-slice.focus {
-    box-shadow: 0 0 0 2px rgba(255, 122, 26, 0.28);
+    box-shadow: 0 0 0 2px rgba(255, 122, 26, 0.32);
+    border-color: rgba(255, 122, 26, 0.6);
   }
   .slice-cite {
-    @apply mt-1.5 text-[11px] text-ember font-bold tracking-[0.04em] uppercase;
+    @apply mt-2 inline-flex items-center gap-1 text-[10.5px] text-ember font-bold tracking-[0.05em] uppercase;
+  }
+  .slice-cite::before {
+    content: "";
+    @apply inline-block w-1.5 h-1.5 rounded-full bg-ember;
   }
   .cite-chip,
   .contrib-chip {
-    @apply inline-block rounded-full px-2.5 py-[3px] text-xs font-semibold;
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-all duration-150;
     border: 1px solid var(--border-strong);
   }
   .cite-chip {
@@ -390,13 +396,15 @@
     @apply bg-surface2 text-faint;
   }
   .voice-group {
-    @apply flex flex-col gap-1;
+    @apply flex flex-col gap-1.5 rounded-2xl p-4;
+    border: 1px solid var(--border);
+    background: rgba(26, 29, 36, 0.4);
   }
   .voice-group-label {
-    @apply text-[10.5px] text-faint font-bold tracking-[0.12em] uppercase mt-1.5;
+    @apply text-[10.5px] text-faint font-bold tracking-[0.12em] uppercase mt-3.5 first:mt-0;
   }
   .voice-row {
-    @apply flex gap-1.5 flex-wrap;
+    @apply flex gap-2 flex-wrap mt-0.5;
   }
 
   /* ---------- Pre / code ---------- */
@@ -410,7 +418,7 @@
 
   /* ---------- Chat ---------- */
   .agent-chat {
-    @apply rounded-xl p-3;
+    @apply rounded-2xl p-3.5;
     border: 1px solid var(--border);
     background: rgba(10, 11, 13, 0.5);
   }
@@ -418,7 +426,7 @@
     @apply flex-1 min-w-0;
   }
   .agent-chat-log {
-    @apply overflow-y-auto flex flex-col gap-2;
+    @apply overflow-y-auto flex flex-col gap-3 pr-1;
   }
   .agent-chat.fill {
     @apply flex flex-col h-full p-0 bg-transparent;
@@ -527,7 +535,8 @@
     @apply flex-row-reverse;
   }
   .chat-avatar {
-    @apply w-5 h-5 rounded-full text-[#0a0b0d] text-[11px] font-extrabold inline-flex items-center justify-center flex-none;
+    @apply w-6 h-6 rounded-full text-[#0a0b0d] text-[11px] font-extrabold inline-flex items-center justify-center flex-none;
+    box-shadow: 0 0 0 2px var(--bg);
   }
   .chat-who {
     @apply text-[11px] text-faint font-bold tracking-[0.04em] uppercase;
@@ -536,12 +545,17 @@
     @apply text-muted italic;
   }
   .chat-bubble {
-    @apply text-[13px] px-3 py-2.5 rounded-xl bg-surface2;
+    @apply text-[13px] px-3.5 py-2.5 rounded-2xl bg-surface2;
     white-space: pre-wrap;
     line-height: 1.5;
     border: 1px solid var(--border);
+    box-shadow: 0 8px 24px -18px rgba(0, 0, 0, 0.9);
+  }
+  .chat-row.theirs .chat-bubble {
+    border-top-left-radius: 6px;
   }
   .chat-row.mine .chat-bubble {
+    border-top-right-radius: 6px;
     background: rgba(255, 122, 26, 0.08);
     border-color: rgba(255, 122, 26, 0.35);
   }

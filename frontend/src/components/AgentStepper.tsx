@@ -40,15 +40,24 @@ function AgentPill({
         background: color,
         color: "#0a0b0d",
         borderColor: color,
-        boxShadow: `0 8px 22px -12px ${color}`,
+        boxShadow: `0 10px 26px -12px ${color}, 0 0 0 1px ${color}`,
       }
     : has
-      ? { borderColor: color, color, background: `${color}12` }
+      ? { borderColor: `${color}80`, color, background: `${color}14` }
       : {};
   return (
-    <button className={on ? "small" : "ghost small"} style={style} onClick={onClick}>
+    <button
+      className={`${on ? "small" : "ghost small"} inline-flex items-center gap-1.5`}
+      style={style}
+      onClick={onClick}
+    >
       {name}
-      {has ? " ·" : ""}
+      {has && (
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full"
+          style={{ background: on ? "#0a0b0d" : color, opacity: on ? 0.55 : 1 }}
+        />
+      )}
     </button>
   );
 }
@@ -539,7 +548,7 @@ export default function AgentStepper({
           </div>
 
           <div
-            className="card"
+            className="card overflow-hidden"
             style={{
               background: "var(--surface-2)",
               borderColor:
@@ -547,6 +556,11 @@ export default function AgentStepper({
               boxShadow: `0 0 0 1px ${COLORS[selected]}22, 0 24px 60px -30px ${COLORS[selected]}55`,
             }}
           >
+            <span
+              aria-hidden
+              className="absolute inset-x-0 top-0 h-[3px]"
+              style={{ background: COLORS[selected] }}
+            />
             <div className="row spread">
               <div className="row" style={{ gap: 8, alignItems: "center" }}>
                 <span className="agent-dot" style={{ background: COLORS[selected] }} />
@@ -601,7 +615,14 @@ export default function AgentStepper({
               ))}
             </div>
 
-            {data && <div style={{ marginTop: 12 }}>{renderAgent(selected, data)}</div>}
+            {data && (
+              <div
+                className="mt-4 pt-4"
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
+                {renderAgent(selected, data)}
+              </div>
+            )}
           </div>
         </div>
       </div>
