@@ -13,6 +13,7 @@ import type { Topic } from "../types";
 import { topicMeta, statusClass, TopicDates } from "./Browse";
 import { useToast } from "../toast";
 import EvidenceReader from "../components/EvidenceReader";
+import JobProgress, { useJobPoll } from "../components/JobProgress";
 
 type Tab = "summary" | "reader" | "fit" | "write" | "source";
 
@@ -43,6 +44,13 @@ export default function Workspace() {
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [fit, setFit] = useState<TopicFit | null>(null);
   const [fitBusy, setFitBusy] = useState(false);
+  // Reconnectable progress bars for the two heavy local-LLM builds. `*Active`
+  // is true while we've kicked one off OR reconnected to one already running on
+  // the server, so the bar survives navigating away and coming back.
+  const [fitActive, setFitActive] = useState(false);
+  const [summaryActive, setSummaryActive] = useState(false);
+  const fitJob = useJobPoll<TopicFit>(() => TopicIntelApi.fitJobStatus(id), fitActive);
+  const summaryJob = useJobPoll<TopicSummary>(() => TopicIntelApi.summaryJobStatus(id), summaryActive);
   const [raw, setRaw] = useState<TopicText | null>(null);
   const [rawBusy, setRawBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -67,6 +75,7 @@ export default function Workspace() {
 
   async function doSummary(force = false) {
     setSummaryBusy(true);
+    setSummaryActive(true);
     setErr("");
     try {
       const s = await TopicIntelApi.summarize(id, force);
@@ -75,11 +84,13 @@ export default function Workspace() {
       setErr(e?.response?.data?.detail || e.message || "Summary failed");
     } finally {
       setSummaryBusy(false);
+      setSummaryActive(false);
     }
   }
 
   async function doFit(force = false) {
     setFitBusy(true);
+    setFitActive(true);
     setErr("");
     try {
       const f = await TopicIntelApi.fit(id, force);
@@ -92,6 +103,7 @@ export default function Workspace() {
       setErr(e?.response?.data?.detail || e.message || "Fit scoring failed");
     } finally {
       setFitBusy(false);
+      setFitActive(false);
     }
   }
 
@@ -184,6 +196,42 @@ export default function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // Reconnect: if a fit / summary for this topic is already running on the
+  // server (started before a reload, or in another tab), reattach its bar.
+  useEffect(() => {
+    let alive = true;
+    setFitActive(false);
+    setSummaryActive(false);
+    TopicIntelApi.fitJobStatus(id)
+      .then((s) => alive && s.state === "running" && setFitActive(true))
+      .catch(() => {});
+    TopicIntelApi.summaryJobStatus(id)
+      .then((s) => alive && s.state === "running" && setSummaryActive(true))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+
+  // When a reconnected build finishes, drop in its cached result and stop the
+  // bar. (Locally-initiated runs are already handled by doFit / doSummary; this
+  // only matters for jobs we didn't start in this tab.)
+  useEffect(() => {
+    if (fitActive && fitJob && (fitJob.state === "done" || fitJob.state === "error")) {
+      if (fitJob.state === "done" && fitJob.result) setFit(fitJob.result);
+      setFitActive(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitJob?.state]);
+
+  useEffect(() => {
+    if (summaryActive && summaryJob && (summaryJob.state === "done" || summaryJob.state === "error")) {
+      if (summaryJob.state === "done" && summaryJob.result) setSummary(summaryJob.result);
+      setSummaryActive(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryJob?.state]);
+
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const title = meta?.title || topic?.topicTitle || topic?.title || id;
@@ -256,8 +304,14 @@ export default function Workspace() {
               <button onClick={() => doSummary(false)}>Summarize this topic</button>
             </div>
           )}
-          {summaryBusy && (
-            <div className="card spinner">OCR + summarizing (first run downloads & reads the PDF)…</div>
+          {summaryJob ? (
+            <JobProgress status={summaryJob} label="Reading the topic" />
+          ) : (
+            summaryBusy && (
+              <div className="card spinner">
+                OCR + summarizing (first run downloads & reads the PDF)…
+              </div>
+            )
           )}
           {summary && (
             <>
@@ -380,7 +434,11 @@ export default function Workspace() {
               <button onClick={() => doFit(false)}>Score fit vs your profile</button>
             </div>
           )}
-          {fitBusy && <div className="card spinner">Comparing requirements to your profile…</div>}
+          {fitJob ? (
+            <JobProgress status={fitJob} label="Scoring fit" />
+          ) : (
+            fitBusy && <div className="card spinner">Comparing requirements to your profile…</div>
+          )}
           {fit && (
             <>
               <div className="card">

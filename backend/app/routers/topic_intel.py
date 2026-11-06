@@ -21,7 +21,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
-from .. import agents, docling_service, dsip, matcher, ollama_client
+from .. import agents, docling_service, dsip, jobs, matcher, ollama_client
 from ..config import settings
 from ..identity import current_identity
 from ..vault import get_vault
@@ -163,6 +163,7 @@ async def _ensure_text(topic_id: str, force: bool = False) -> dict[str, Any]:
     text = ""
     source = ""
     # Primary: the official solicitation PDF, OCR'd by Docling.
+    jobs.progress("Downloading & reading the solicitation PDF (OCR)…", 15)
     try:
         resp = await dsip.get_bytes(f"/topics/{topic_id}/download/PDF")
         data = resp.content if resp else b""
@@ -237,6 +238,7 @@ async def _ensure_summary(topic_id: str, force: bool = False) -> dict[str, Any]:
     raw = (text_blob.get("text") or "").strip()
     if not raw:
         raise HTTPException(status_code=502, detail="No topic text available to summarize.")
+    jobs.progress("Summarizing the topic & pulling out requirements…", 45)
     model = ""
     try:
         out = await ollama_client.chat(
@@ -325,6 +327,7 @@ async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
         + req_lines[:3000]
         + "\n\nReturn ONLY the JSON described above."
     )
+    jobs.progress("Scoring this topic against your profile…", 75)
     model = ""
     try:
         out = await ollama_client.chat(_FIT_SYSTEM, prompt, temperature=0.2, format_json=True)
@@ -386,14 +389,75 @@ async def topic_text(topic_id: str, force: bool = Query(False)):
         raise HTTPException(status_code=502, detail=f"DSIP download failed: {e}") from e
 
 
+def _fit_owner(topic_id: str) -> str:
+    cid, uid = _ident_key()
+    return f"{cid}:{uid}"
+
+
 @router.post("/{topic_id}/summary")
 async def topic_summary(topic_id: str, force: bool = Query(False)):
-    return await _ensure_summary(topic_id, force=force)
+    # Run through the job registry so a second request for the same topic
+    # attaches to the in-flight run instead of starting a duplicate Ollama call,
+    # and the shared "summary" bar can reconnect across tabs/navigation.
+    job = jobs.start(
+        "summary", topic_id, "shared",
+        lambda: _ensure_summary(topic_id, force=force),
+        identity=current_identity(),
+    )
+    await job.task
+    if job.state == "error":
+        raise HTTPException(status_code=502, detail=job.error or "Summary failed")
+    return job.result
 
 
 @router.post("/{topic_id}/fit")
 async def topic_fit(topic_id: str, force: bool = Query(False)):
-    return await _fit(topic_id, force=force)
+    # Access check happens up-front (fast, proper 401/403); the heavy work runs
+    # as a tracked, deduped background task that survives the client leaving.
+    _require_fit_access(topic_id)
+    job = jobs.start(
+        "fit", topic_id, _fit_owner(topic_id),
+        lambda: _fit(topic_id, force=force),
+        identity=current_identity(),
+    )
+    await job.task
+    if job.state == "error":
+        raise HTTPException(status_code=502, detail=job.error or "Fit scoring failed")
+    return job.result
+
+
+@router.get("/{topic_id}/fit/status")
+async def topic_fit_job_status(topic_id: str):
+    """Progress of this caller's in-flight (or just-finished) fit for the topic.
+
+    Lets the UI render a reconnectable progress bar: because the job lives on the
+    server, a reload or a brand-new tab picks the same job back up. Returns the
+    cached result inline once the job is done so the client can render without a
+    second round-trip."""
+    cid, uid = _require_fit_access(topic_id)
+    job = jobs.get("fit", topic_id, f"{cid}:{uid}")
+    if job is not None:
+        out = job.public()
+        out["result"] = _read_fit(topic_id, cid, uid) if job.state == "done" else None
+        return out
+    cached = _read_fit(topic_id, cid, uid)
+    if cached:
+        return {"state": "done", "stage": "done", "pct": 100, "result": cached}
+    return {"state": "idle", "stage": "idle", "pct": 0, "result": None}
+
+
+@router.get("/{topic_id}/summary/status")
+async def topic_summary_job_status(topic_id: str):
+    """Progress of the shared summary/OCR build for this topic (see fit/status)."""
+    job = jobs.get("summary", topic_id, "shared")
+    if job is not None:
+        out = job.public()
+        out["result"] = _read_shared(topic_id, "summary") if job.state == "done" else None
+        return out
+    cached = _read_shared(topic_id, "summary")
+    if cached:
+        return {"state": "done", "stage": "done", "pct": 100, "result": cached}
+    return {"state": "idle", "stage": "idle", "pct": 0, "result": None}
 
 
 @router.get("/{topic_id}/fit")

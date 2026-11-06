@@ -8,6 +8,7 @@ import { CouncilCard } from "./Analysis";
 import FlintCard, { type FlintResult } from "../components/FlintCard";
 import AgentChat from "../components/AgentChat";
 import MatchBreakdown, { bucketFor } from "../components/MatchBreakdown";
+import JobProgress, { useJobPoll } from "../components/JobProgress";
 import RerankDialog from "../components/RerankDialog";
 import WhyMatched from "../components/WhyMatched";
 import TopicScatter from "../components/TopicScatter";
@@ -36,6 +37,11 @@ export default function Inbox() {
   const [inbox, setInbox] = useState<MatchInbox | null>(null);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  // Drives the reconnectable scan progress bar (separate from `scanning`, which
+  // also gates buttons). Set true both when we kick a scan and when we reconnect
+  // to one already running on the server (e.g. started in another tab).
+  const [scanActive, setScanActive] = useState(false);
+  const scanJob = useJobPoll(() => MatchesApi.scanStatus(), scanActive);
   const [error, setError] = useState("");
   const [deepRunning, setDeepRunning] = useState(false);
   const [deepProgress, setDeepProgress] = useState("");
@@ -138,6 +144,7 @@ export default function Inbox() {
 
   async function runScan(body: ScanBody) {
     setScanning(true);
+    setScanActive(true);
     setError("");
     try {
       const data = await MatchesApi.scan(body);
@@ -152,9 +159,40 @@ export default function Inbox() {
       setError(e?.response?.data?.detail || e.message || "Scan failed");
     } finally {
       setScanning(false);
+      setScanActive(false);
       setRerankOpen(false);
     }
   }
+
+  // Reconnect: if a scan is already running on the server when we land here
+  // (started before a reload, or from another tab), pick its progress back up.
+  useEffect(() => {
+    let alive = true;
+    MatchesApi.scanStatus()
+      .then((s) => {
+        if (alive && s.state === "running") {
+          setScanning(true);
+          setScanActive(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // When a reconnected scan finishes, refresh the inbox to show its results.
+  // (A locally-initiated scan is handled by runScan's awaited response; this is
+  // harmless if it also fires there — it just reloads the same data.)
+  useEffect(() => {
+    if (!scanActive || !scanJob) return;
+    if (scanJob.state === "done" || scanJob.state === "error") {
+      load(false);
+      setScanning(false);
+      setScanActive(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanJob?.state]);
 
   async function uploadResume() {
     const file = fileRef.current?.files?.[0];
@@ -455,8 +493,12 @@ export default function Inbox() {
         </p>
       </div>
 
-      {(scanning || loading) && (
-        <div className="card spinner">Scanning open topics against your profile…</div>
+      {scanJob ? (
+        <JobProgress status={scanJob} label="Re-ranking inbox" />
+      ) : (
+        (scanning || loading) && (
+          <div className="card spinner">Scanning open topics against your profile…</div>
+        )
       )}
       {deepProgress && <div className="card spinner">{deepProgress}</div>}
 

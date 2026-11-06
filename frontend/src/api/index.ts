@@ -110,7 +110,25 @@ export const TopicIntelApi = {
     api
       .get<{ scored: string[] }>(`/topics/mine/fits`, { params: { ids: ids.join(",") } })
       .then((r) => r.data.scored),
+  // Server-side progress of an in-flight (or just-finished) fit / summary build.
+  // Reconnectable: because the job lives on the backend, a reload or a new tab
+  // picks the same job back up. The done payload carries the cached result.
+  fitJobStatus: (id: string) =>
+    api.get<JobStatus<TopicFit>>(`/topics/${id}/fit/status`).then((r) => r.data),
+  summaryJobStatus: (id: string) =>
+    api.get<JobStatus<TopicSummary>>(`/topics/${id}/summary/status`).then((r) => r.data),
 };
+
+// A heavy local-LLM job (topic fit/summary, inbox scan) tracked server-side so
+// its progress survives you leaving the page and never double-runs on retrigger.
+export interface JobStatus<T = unknown> {
+  state: "idle" | "running" | "done" | "error";
+  stage: string;
+  pct: number;
+  error?: string;
+  elapsed?: number;
+  result?: T | null;
+}
 
 // ---- Analysis ----
 export interface TopicMeta {
@@ -482,6 +500,9 @@ export const MatchesApi = {
     api.get<MatchInbox>("/matches", { params: { resume_id } }).then((r) => r.data),
   scan: (body?: ScanBody) =>
     api.post<MatchInbox>("/matches/scan", body || {}).then((r) => r.data),
+  // Server-side progress of the caller's in-flight scan (one at a time per user).
+  scanStatus: () =>
+    api.get<JobStatus>("/matches/scan/status").then((r) => r.data),
   rerankOptions: () =>
     api.get<RerankOptions>("/matches/rerank/options").then((r) => r.data),
 };

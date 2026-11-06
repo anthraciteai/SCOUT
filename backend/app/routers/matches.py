@@ -10,8 +10,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from .. import catalog, ollama_client
-from ..db import get_session
+from .. import catalog, jobs, ollama_client
+from ..db import engine, get_session
 from ..identity import current_identity
 from ..matcher import run_scan, serialize_match
 from ..models import MatchScan, OpportunityMatch, Resume
@@ -150,32 +150,63 @@ async def scan_matches(
     """Run a scan. `body` selects the source (self / another employee / company only)."""
     if body is None:
         body = ScanRequest(resume_id=resume_id, force_extract=force_extract)
+    # Validate up-front with the request session (fast, proper 400/404). The
+    # heavy scan then runs in a background task with its OWN session so it keeps
+    # going — and keeps caching — even if the client navigates away.
     resume = _active_resume(session, body.resume_id)
+    rid = resume.id
     mode = (body.mode or "me").lower()
     if mode not in ("me", "employee", "company"):
         raise HTTPException(status_code=400, detail=f"Unknown mode '{mode}'")
     if mode == "employee" and not body.employee_id:
         raise HTTPException(status_code=400, detail="employee_id is required for mode=employee")
-    try:
-        result = await run_scan(
-            session,
-            resume,
-            force_extract=body.force_extract or (mode != "me") or (not body.include_company),
-            mode=mode,
-            employee_id=body.employee_id,
-            include_company=body.include_company,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Match scan failed: {e}") from e
-    result["resume"] = {
-        "id": resume.id,
-        "name": resume.name,
-        "chars": len(resume.text or ""),
-        "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
-    }
-    return result
+
+    ident = current_identity()
+    owner = f"{(ident.company_id if ident else '') or ''}:{(ident.user_id if ident else '') or ''}"
+    scope_key = f"{mode}:{body.employee_id or ''}:{rid}"
+
+    async def work():
+        with Session(engine) as s:
+            r = s.get(Resume, rid)
+            result = await run_scan(
+                s,
+                r,
+                force_extract=body.force_extract or (mode != "me") or (not body.include_company),
+                mode=mode,
+                employee_id=body.employee_id,
+                include_company=body.include_company,
+            )
+            result["resume"] = {
+                "id": r.id,
+                "name": r.name,
+                "chars": len(r.text or ""),
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            return result
+
+    job = jobs.start("scan", scope_key, owner, work, identity=ident)
+    await job.task
+    if job.state == "error":
+        # run_scan raises ValueError for access problems (e.g. not that person's
+        # company-mate); keep the 403 vs 502 distinction the UI relied on.
+        detail = job.error or "Match scan failed"
+        raise HTTPException(status_code=403 if "permission" in detail.lower() else 502, detail=detail)
+    return job.result
+
+
+@router.get("/scan/status")
+async def scan_status():
+    """Progress of the caller's in-flight (or just-finished) inbox scan.
+
+    A scan is one-at-a-time per user, so the UI can poll without echoing the
+    scan's internal scope key. Because the job lives on the server the bar
+    reconnects across reloads/tabs; nothing new is computed here."""
+    ident = current_identity()
+    owner = f"{(ident.company_id if ident else '') or ''}:{(ident.user_id if ident else '') or ''}"
+    job = jobs.find_running("scan", owner)
+    if job is None:
+        return {"state": "idle", "stage": "idle", "pct": 0}
+    return job.public()
 
 
 WHY_SYSTEM = (

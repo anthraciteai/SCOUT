@@ -653,6 +653,9 @@ async def run_scan(
     employee_id: Optional[str] = None,
     include_company: bool = True,
 ) -> dict[str, Any]:
+    from . import jobs  # local import avoids a cycle (jobs imports identity only)
+
+    jobs.progress("Reading your resume & building a search profile…", 10)
     profile = await ensure_profile(
         session,
         resume,
@@ -672,12 +675,14 @@ async def run_scan(
     scored: list[dict[str, Any]] = []
     # Inbox ranking must list the whole open window. LLM phrase enrich is a
     # separate catalog pass — do not block Scan on 24 Ollama calls.
+    jobs.progress("Refreshing the open-topic catalog from DSIP…", 30)
     try:
         catalog_info = await catalog.refresh_catalog(session, enrich_limit=0)
     except Exception:
         catalog_info = {"error": "catalog refresh failed; using live DSIP sample"}
     rows = catalog.open_rows(session, catalog_info.get("open_ids") or [])
     if rows:
+        jobs.progress(f"Scoring {len(rows)} open topics against your profile…", 60)
         if not profile.get("_embedding"):
             try:
                 vec = await ollama_client.embed(
