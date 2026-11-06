@@ -376,7 +376,10 @@ export default function AgentStepper({
   useEffect(() => {
     if (!topicId) return;
     CatalogApi.topic(topicId)
-      .then((t) => setScoutPhrases(t.phrases || []))
+      // Phrases come from a cached extract that occasionally carries raw HTML
+      // fragments (e.g. a "<p>…</p>" keyword blob). Strip tags so the chips read
+      // as plain text instead of showing literal markup.
+      .then((t) => setScoutPhrases((t.phrases || []).map((p) => stripHtml(String(p))).filter(Boolean)))
       .catch(() => setScoutPhrases([]));
   }, [topicId]);
 
@@ -387,7 +390,7 @@ export default function AgentStepper({
     component: [topic.component, topic.command, topic.program].filter(Boolean).join(" · "),
     objective: stripHtml(String(topic.objective || topic.topicObjective || "")),
     description: stripHtml(String(topic.description || topic.topicDescription || "")),
-    keywords: String(topic.keywords || ""),
+    keywords: stripHtml(String(topic.keywords || "")),
     scout_tags: scoutPhrases.join(" · "),
     company_mission: mission,
     products: products,

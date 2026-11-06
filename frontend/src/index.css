@@ -330,10 +330,18 @@
   }
   .agent-workspace-grid {
     @apply grid gap-[18px] mt-3 items-start;
-    grid-template-columns: minmax(260px, 0.65fr) minmax(480px, 1.6fr);
+    grid-template-columns: minmax(280px, 0.6fr) minmax(460px, 1.6fr);
   }
+  /* The source document is a sticky REFERENCE rail, not a nested scroll box:
+     the page keeps a single natural scrollbar (no scroll-trap), and the slices
+     stay in view while you read the agent's answer. It only scrolls internally
+     when it's taller than the viewport. */
   .agent-doc {
-    @apply flex flex-col gap-2 max-h-[72vh] overflow-y-auto pr-1;
+    @apply flex flex-col gap-2 pr-1;
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
   }
   .doc-slice {
     @apply block w-full text-left bg-surface2 text-ink rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors;
@@ -647,6 +655,15 @@
 @media (max-width: 900px) {
   .agent-workspace-grid {
     grid-template-columns: 1fr;
+  }
+  /* Single column: let the document stack and flow with the page instead of
+     sticking / scrolling on its own, and drop it BELOW the agent controls so
+     you don't scroll past the whole source doc to pick a voice. */
+  .agent-doc {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    order: 2;
   }
 }
 @media (max-width: 800px) {

@@ -29,7 +29,7 @@ export default function AgentChat({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
-  const color = AGENT_COLORS[agent] || "var(--accent)";
+  const color = (AGENT_COLORS as Record<string, string>)[agent] || "var(--accent)";
 
   async function load() {
     try {
