@@ -370,6 +370,39 @@ def _contains(haystack: str, needle: str) -> bool:
     return bool(re.search(rf"\b{re.escape(n)}\b", haystack))
 
 
+# Tokens that match almost every topic in the DoD UAS / defense corpus. They
+# carry little signal on their own, so they're heavily downweighted in scoring
+# and never shown as a match reason. (A title ending in "…for Unmanned Aerial
+# Systems" should NOT out-rank a topic that is actually about your tech.)
+_DOMAIN_STOP = {
+    "unmanned", "aerial", "air", "system", "systems", "vehicle", "vehicles",
+    "technology", "technologies", "capability", "capabilities", "solution",
+    "solutions", "platform", "platforms", "device", "devices", "data",
+    "software", "hardware", "sensor", "sensors", "development", "design",
+    "advanced", "novel", "defense", "military", "operational", "mission",
+    "performance", "support", "integration", "analysis", "management", "small",
+    "based", "enabled", "autonomous",
+}
+
+
+def _term_weight(term: str) -> float:
+    """How discriminating a profile term is. Generic corpus words barely count;
+    specific multi-word phrases and acronyms (C-UAS, PX4, ROS2, TAK) count more.
+    This is a cheap stand-in for IDF without needing a corpus."""
+    t = term.strip()
+    low = t.lower()
+    if low in _DOMAIN_STOP:
+        return 0.3
+    if " " in low or "-" in low or "/" in low:
+        words = [w for w in re.split(r"[ \-/]+", low) if w]
+        if words and all(w in _DOMAIN_STOP for w in words):
+            return 0.4  # phrase built only from generic words, e.g. "unmanned aerial systems"
+        return 2.0
+    if len(t) <= 6 and (t.isupper() or any(c.isdigit() for c in t)):
+        return 1.6  # acronym / model number: PX4, TAK, ROS2, LLM
+    return 1.0
+
+
 def score_topic(topic: dict[str, Any], profile: dict[str, Any]) -> tuple[float, list[str]]:
     title, blob = _topic_blob(topic)
     hay_title = title.lower()
@@ -380,28 +413,55 @@ def score_topic(topic: dict[str, Any], profile: dict[str, Any]) -> tuple[float, 
         + list(profile.get("domains") or []),
         40,
     )
+    if not terms:
+        return 0.0, []
+    total_w = sum(_term_weight(t) for t in terms)
+    hit_w = 0.0
+    title_w = 0.0
     hits: list[str] = []
     title_hits: list[str] = []
     for term in terms:
+        w = _term_weight(term)
         if _contains(hay_all, term):
             hits.append(term)
+            hit_w += w
         if _contains(hay_title, term):
             title_hits.append(term)
-    if not terms:
-        return 0.0, []
-    overlap = len(hits) / max(len(terms), 1)
-    title_frac = min(len(title_hits) / 3.0, 1.0)
-    score = 70.0 * overlap + 30.0 * title_frac
+            title_w += w
+    # Reward absolute specific signal, not fraction-of-whole-profile (dividing
+    # by the full profile size punishes people with broad resumes). Cap the
+    # denominator so matching a handful of your *strong* terms already reads as
+    # a strong match, while a pile of generic-word hits does not.
+    denom = min(max(total_w, 1.0), 10.0)
+    overlap = min(1.0, hit_w / denom)
+    title_frac = min(title_w / 4.0, 1.0)
+    score = 65.0 * overlap + 35.0 * title_frac
     score = max(0.0, min(100.0, round(score, 1)))
+    # Cite specific matches only — generic corpus words (weight < 1) are noise.
     reasons: list[str] = []
-    for t in title_hits[:4]:
-        reasons.append(f"Title mentions “{t}”")
+    for t in title_hits:
+        if _term_weight(t) >= 1.0:
+            reasons.append(f"Title mentions “{t}”")
+        if len(reasons) >= 4:
+            break
     for t in hits:
-        if t not in title_hits:
-            reasons.append(f"Matched “{t}”")
+        if t in title_hits or _term_weight(t) < 1.0:
+            continue
+        reasons.append(f"Matched “{t}”")
         if len(reasons) >= 6:
             break
     return score, reasons
+
+
+def _cos_signal(cos: float) -> float:
+    """Stretch the meaningful band of embedding cosine into 0..1.
+
+    nomic-embed-text parks even unrelated topic/profile pairs around 0.42 and
+    tops out near ~0.80 for a genuinely on-point match, so raw cosine*100 badly
+    understates real fit (and compresses everything into a narrow mid band).
+    Map [0.42, 0.80] -> [0, 1], clamped."""
+    lo, hi = 0.42, 0.80
+    return max(0.0, min(1.0, (cos - lo) / (hi - lo)))
 
 
 def score_catalog_row(row, profile: dict[str, Any]) -> tuple[float, list[str], list[str]]:
@@ -432,9 +492,15 @@ def score_catalog_row(row, profile: dict[str, Any]) -> tuple[float, list[str], l
     vec_r = profile.get("_embedding") if isinstance(profile.get("_embedding"), list) else None
     cos = catalog.cosine(vec_t, vec_r)
     if cos is None:
-        score = 0.5 * kw_score + 0.5 * tag_score
+        score = 0.6 * kw_score + 0.4 * tag_score
     else:
-        score = 0.4 * kw_score + 0.4 * tag_score + 0.2 * (cos * 100.0)
+        # Lean on semantic similarity: it catches "Counter-Unmanned Aerial
+        # Systems" ≈ "C-UAS" that literal keyword overlap misses, and resists
+        # the generic-word inflation that keyword overlap is prone to. The
+        # cosine is stretched first (see _cos_signal) because nomic-embed-text
+        # never drops near 0 — raw cosine badly understates real fit.
+        cs = _cos_signal(cos)
+        score = 0.4 * kw_score + 0.15 * tag_score + 0.45 * (cs * 100.0)
         reasons.append(f"Embedding {cos:.2f}")
     for p in list(shared)[:4]:
         reasons.insert(0, f"Tag “{p}”")
@@ -679,15 +745,9 @@ async def run_scan(
         raise RuntimeError(
             "DSIP returned no topics for the profile queries. Check the DSIP proxy and try again."
         )
-    # Within-scan rescale so the top match anchors to 100. The absolute score
-    # formula compresses hard once profiles grow past ~20 phrases (denominator
-    # dominates); rescaling keeps buckets (strong ≥75, good ≥60, ok ≥40)
-    # meaningful without breaking the ordering that Deep-score / rank rely on.
-    top_raw = max((x["score"] or 0.0) for x in scored)
-    if top_raw > 0:
-        for x in scored:
-            x["raw_score"] = x["score"]
-            x["score"] = round(100.0 * (x["score"] or 0.0) / top_raw, 1)
+    # Show the honest ABSOLUTE score — no forced rescale to 100. The weighted
+    # overlap + capped denominator (see score_topic) keeps real spread without
+    # pinning the top match to a fake "100% match". Ordering is unchanged.
     scored.sort(key=lambda x: (-x["score"], str(x.get("topic_code") or "")))
     # Anyone can bid anything — rank high to low, do not hide the long tail.
     kept = scored

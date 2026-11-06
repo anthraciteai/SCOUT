@@ -13,10 +13,13 @@ export interface Bucket {
 }
 
 export const BUCKETS: Bucket[] = [
-  { key: "strong", label: "Strong", min: 75, color: "#ff7a1a", hint: "≥ 75 — write today" },
-  { key: "good", label: "Good", min: 60, color: "#35d07f", hint: "60–74 — solid fit" },
-  { key: "ok", label: "OK", min: 40, color: "#8a7bff", hint: "40–59 — worth a look" },
-  { key: "weak", label: "Not great", min: 0, color: "#3a3a44", hint: "< 40 — long tail" },
+  // Thresholds track the HONEST absolute blend (no forced top=100 rescale).
+  // Real top matches land ~30-40, so "Strong" means keyword + tag + strong
+  // semantic signal all lined up — the best fit DSIP actually offers today.
+  { key: "strong", label: "Strong", min: 35, color: "#ff7a1a", hint: "≥ 35 — best available fit" },
+  { key: "good", label: "Good", min: 25, color: "#35d07f", hint: "25–34 — solid adjacency" },
+  { key: "ok", label: "OK", min: 15, color: "#8a7bff", hint: "15–24 — worth a look" },
+  { key: "weak", label: "Not great", min: 0, color: "#3a3a44", hint: "< 15 — long tail" },
 ];
 
 export function bucketFor(score: number): Bucket {
