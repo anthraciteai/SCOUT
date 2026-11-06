@@ -180,6 +180,13 @@ export default function Workspace() {
     if (tab === "reader" && summary && !raw && !rawBusy) {
       void doRaw(false);
     }
+    // Pull the cached fit (if already scored) so the reader can color the
+    // source text by fit — no model call / no tokens.
+    if (tab === "reader" && !fit && !fitBusy) {
+      TopicIntelApi.fitCached(id)
+        .then((f) => f && setFit(f))
+        .catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, summary, raw, rawBusy]);
 
@@ -413,11 +420,37 @@ export default function Workspace() {
             <div className="card meta">No source text could be extracted for this topic.</div>
           ) : (
             <div className="card">
-              <p className="meta" style={{ marginTop: 0 }}>
-                Hover a requirement to find its source sentence — or hover the highlighted
-                text to see which requirement it drove. Colors tie the two together.
-              </p>
-              <EvidenceReader text={raw.text} requirements={summary.requirements} />
+              {fit?.requirements?.length ? (
+                <p className="meta" style={{ marginTop: 0 }}>
+                  Fit heat-map: the source text is highlighted by how you stack up —{" "}
+                  <span style={{ color: "var(--green)" }}>green = you meet it</span>,{" "}
+                  <span style={{ color: "var(--yellow)" }}>amber = partial</span>,{" "}
+                  <span style={{ color: "var(--red)" }}>red = gap</span>. Hover any
+                  highlight to see which requirement it is and why.
+                </p>
+              ) : (
+                <p className="meta" style={{ marginTop: 0 }}>
+                  Hover a requirement to find its source sentence — or hover the highlighted
+                  text to see which requirement it drove.{" "}
+                  <button className="ghost small" onClick={() => doFit(false)} disabled={fitBusy}>
+                    Score fit vs you
+                  </button>{" "}
+                  to color the text by where you’re strong vs. have gaps.
+                </p>
+              )}
+              <EvidenceReader
+                text={raw.text}
+                requirements={
+                  fit?.requirements?.length
+                    ? fit.requirements.map((r) => ({
+                        need: r.need,
+                        evidence: r.evidence,
+                        status: r.status,
+                        note: r.matched_capability,
+                      }))
+                    : summary.requirements
+                }
+              />
             </div>
           )}
         </div>

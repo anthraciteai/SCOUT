@@ -6,16 +6,37 @@ import {
   type EvidenceInput,
 } from "../lib/evidence";
 
+export type FitStatus = "meets" | "partial" | "gap";
+
 export interface EvidenceRequirement extends EvidenceInput {
   need: string;
   evidence?: string;
+  /** When present, the reader colors by fit and shows the coverage note. */
+  status?: FitStatus;
+  /** Why it fits (your matched capability) or what's missing. */
+  note?: string;
 }
 
+const STATUS_COLOR: Record<FitStatus, string> = {
+  meets: "#35d07f",
+  partial: "#ffc24b",
+  gap: "#ff5d5d",
+};
+
+const STATUS_LABEL: Record<FitStatus, string> = {
+  meets: "You meet this",
+  partial: "Partial",
+  gap: "Gap",
+};
+
 /**
- * Two-pane evidence reader. Left: the extracted requirements, each in its own
- * color. Right: the raw OCR text with the source sentence for each requirement
- * highlighted in that same color. Hovering either side lights up the other and
- * scrolls the matching sentence into view.
+ * Two-pane evidence reader. Left: the extracted requirements. Right: the raw
+ * OCR text with each requirement's source sentence highlighted. Hovering either
+ * side lights up the other and scrolls the matching sentence into view.
+ *
+ * When requirements carry a fit `status`, highlights are colored by fit
+ * (green = you meet it, amber = partial, red = gap) and the sidebar + hover
+ * tooltip explain *why* — turning the source text into a fit heat-map.
  */
 export default function EvidenceReader({
   text,
@@ -30,6 +51,12 @@ export default function EvidenceReader({
   );
   const [active, setActive] = useState<number | null>(null);
   const segRefs = useRef<Record<number, HTMLSpanElement | null>>({});
+
+  const hasStatus = requirements.some((r) => r.status);
+  const colorFor = (ri: number): string => {
+    const st = requirements[ri]?.status;
+    return st ? STATUS_COLOR[st] : colorForReq(ri);
+  };
 
   function focusReq(ri: number | null) {
     setActive(ri);
@@ -47,8 +74,18 @@ export default function EvidenceReader({
         <div className="text-[11px] text-faint font-bold uppercase tracking-[0.1em]">
           {model.locatedCount}/{requirements.length} grounded in the text
         </div>
+        {hasStatus && (
+          <div className="flex flex-wrap gap-2 pb-1">
+            {(Object.keys(STATUS_COLOR) as FitStatus[]).map((st) => (
+              <span key={st} className="inline-flex items-center gap-1.5 text-[11px] text-muted">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS_COLOR[st] }} />
+                {STATUS_LABEL[st]}
+              </span>
+            ))}
+          </div>
+        )}
         {requirements.map((r, ri) => {
-          const color = colorForReq(ri);
+          const color = colorFor(ri);
           const located = (model.segmentByReq[ri]?.length ?? 0) > 0;
           const on = active === ri;
           return (
@@ -68,9 +105,25 @@ export default function EvidenceReader({
                   style={{ background: color }}
                 />
                 <div className="min-w-0">
-                  <div className="text-[13px] leading-snug text-ink">{r.need}</div>
+                  <div className="flex items-start gap-2">
+                    {r.status && (
+                      <span
+                        className="mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                        style={{ border: `1px solid ${color}`, color }}
+                      >
+                        {STATUS_LABEL[r.status]}
+                      </span>
+                    )}
+                    <div className="text-[13px] leading-snug text-ink">{r.need}</div>
+                  </div>
                   {r.evidence && (
                     <div className="text-[12px] text-muted italic mt-1">"{r.evidence}"</div>
+                  )}
+                  {r.note && (
+                    <div className="text-[12px] mt-1" style={{ color }}>
+                      {r.status === "gap" ? "Missing: " : "Your coverage: "}
+                      <span className="text-muted">{r.note}</span>
+                    </div>
                   )}
                   {!located && (
                     <div className="text-[11px] text-faint mt-1">
@@ -94,19 +147,25 @@ export default function EvidenceReader({
             return <span key={si}>{seg.text}</span>;
           }
           const primary = seg.reqs[0];
-          const color = colorForReq(primary);
+          const color = colorFor(primary);
           const on = active != null && seg.reqs.includes(active);
-          const needs = seg.reqs
-            .map((ri) => requirements[ri]?.need)
+          const tip = seg.reqs
+            .map((ri) => {
+              const r = requirements[ri];
+              if (!r) return "";
+              const label = r.status ? `[${STATUS_LABEL[r.status]}] ` : "";
+              const why = r.note ? ` — ${r.status === "gap" ? "missing" : "you have"}: ${r.note}` : "";
+              return `${label}${r.need}${why}`;
+            })
             .filter(Boolean)
-            .join(" • ");
+            .join("\n");
           return (
             <span
               key={si}
               ref={(el) => {
                 segRefs.current[si] = el;
               }}
-              title={needs}
+              title={tip}
               onMouseEnter={() => setActive(primary)}
               onMouseLeave={() => setActive(null)}
               className="rounded cursor-help transition-colors"
