@@ -24,6 +24,31 @@ export type FlintResult = AgentResult & {
   do_not_fake?: string[];
 };
 
+/** Coerce any model value into a safe React child. The LLM sometimes returns
+ *  an object (e.g. {tool, role_in_this_bid}) where a string is expected, which
+ *  otherwise crashes the render with React error #31. */
+function asText(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const name = o.tool ?? o.name ?? o.title ?? o.text;
+    if (typeof name === "string" && name.trim()) {
+      const role = o.role_in_this_bid;
+      return typeof role === "string" && role.trim() && role !== name
+        ? `${name} → ${role}`
+        : name;
+    }
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
 export default function FlintCard({ rec }: { rec: FlintResult }) {
   const sparks = Array.isArray(rec.sparks) ? rec.sparks : [];
   const tools = Array.isArray(rec.tools_in_play) ? rec.tools_in_play : [];
@@ -35,7 +60,7 @@ export default function FlintCard({ rec }: { rec: FlintResult }) {
         <span className="meta">· creative toolwright — only your real stack</span>
       </div>
       {rec.persona_read && (
-        <p style={{ fontSize: 14, lineHeight: 1.55, marginTop: 0 }}>{rec.persona_read}</p>
+        <p style={{ fontSize: 14, lineHeight: 1.55, marginTop: 0 }}>{asText(rec.persona_read)}</p>
       )}
       {tools.length > 0 && (
         <>
@@ -43,7 +68,7 @@ export default function FlintCard({ rec }: { rec: FlintResult }) {
           <div className="row" style={{ gap: 6, marginBottom: 10 }}>
             {tools.map((t, i) => (
               <span className="tag" key={i} title={t.from_resume || t.role_in_this_bid}>
-                {t.tool}
+                {asText(t.tool)}
                 {t.role_in_this_bid ? ` → ${t.role_in_this_bid}` : ""}
               </span>
             ))}
@@ -57,29 +82,29 @@ export default function FlintCard({ rec }: { rec: FlintResult }) {
           style={{ background: "var(--panel)", marginBottom: 8, padding: 12 }}
         >
           <div className="row spread">
-            <strong style={{ fontSize: 14 }}>{s.title || `Spark ${i + 1}`}</strong>
+            <strong style={{ fontSize: 14 }}>{asText(s.title) || `Spark ${i + 1}`}</strong>
             <span className="meta">
               orig {s.originality ?? "—"} · feas {s.feasibility ?? "—"}
             </span>
           </div>
-          {s.hook && <p style={{ fontSize: 13, margin: "6px 0" }}>{s.hook}</p>}
+          {s.hook && <p style={{ fontSize: 13, margin: "6px 0" }}>{asText(s.hook)}</p>}
           {Array.isArray(s.how) && s.how.length > 0 && (
             <ul className="tight">
               {s.how.map((h, j) => (
-                <li key={j}>{h}</li>
+                <li key={j}>{asText(h)}</li>
               ))}
             </ul>
           )}
           {s.why_only_you && (
             <div className="meta" style={{ marginTop: 4 }}>
-              Why only you: {s.why_only_you}
+              Why only you: {asText(s.why_only_you)}
             </div>
           )}
           {Array.isArray(s.tools) && s.tools.length > 0 && (
             <div className="row" style={{ gap: 6, marginTop: 6 }}>
-              {s.tools.map((t) => (
-                <span className="tag" key={t}>
-                  {t}
+              {s.tools.map((t, j) => (
+                <span className="tag" key={j}>
+                  {asText(t)}
                 </span>
               ))}
             </div>
@@ -89,7 +114,7 @@ export default function FlintCard({ rec }: { rec: FlintResult }) {
       {rec.left_field && (
         <div className="card" style={{ borderColor: "var(--accent)", padding: 12 }}>
           <div className="kv">Left field</div>
-          <div style={{ fontSize: 13 }}>{rec.left_field}</div>
+          <div style={{ fontSize: 13 }}>{asText(rec.left_field)}</div>
         </div>
       )}
       {fake.length > 0 && (
@@ -97,7 +122,7 @@ export default function FlintCard({ rec }: { rec: FlintResult }) {
           <div className="kv">Do not fake</div>
           <ul className="tight">
             {fake.map((x, i) => (
-              <li key={i}>{x}</li>
+              <li key={i}>{asText(x)}</li>
             ))}
           </ul>
         </>
