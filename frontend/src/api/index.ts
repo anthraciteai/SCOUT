@@ -579,12 +579,22 @@ export const SystemApi = {
   agents: () => api.get<AgentMeta[]>("/system/agents").then((r) => r.data),
 };
 
+export interface AuthTokenResponse {
+  token: string;
+  refresh_token?: string | null;
+  expires_in?: number | null;
+  user: ScoutUser;
+}
+
 export const AuthApi = {
   status: () => api.get<AuthStatus>("/auth/status").then((r) => r.data),
   login: (username: string, password = "", company_id?: string) =>
     api
-      .post<{ token: string; user: ScoutUser }>("/auth/login", { username, password, company_id })
+      .post<AuthTokenResponse>("/auth/login", { username, password, company_id })
       .then((r) => r.data),
+  // Keycloak mode only: exchange a refresh token for a fresh access token.
+  refresh: (refresh_token: string) =>
+    api.post<AuthTokenResponse>("/auth/refresh", { refresh_token }).then((r) => r.data),
   me: () => api.get<ScoutUser>("/auth/me").then((r) => r.data),
 };
 

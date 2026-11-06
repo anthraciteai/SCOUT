@@ -1,6 +1,17 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { AuthApi } from "./api";
+import { AuthApi, type AuthTokenResponse } from "./api";
 import type { AuthStatus, ScoutUser } from "./types";
+
+function storeTokens(res: AuthTokenResponse) {
+  localStorage.setItem("scout_token", res.token);
+  if (res.refresh_token) localStorage.setItem("scout_refresh", res.refresh_token);
+  else localStorage.removeItem("scout_refresh");
+}
+
+function clearTokens() {
+  localStorage.removeItem("scout_token");
+  localStorage.removeItem("scout_refresh");
+}
 
 interface AuthCtx {
   status: AuthStatus | null;
@@ -29,12 +40,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setReady(true);
             return;
           } catch {
-            localStorage.removeItem("scout_token");
+            // Access token may just be stale — try a refresh (Keycloak mode).
+            const refresh = localStorage.getItem("scout_refresh");
+            if (refresh) {
+              try {
+                const r = await AuthApi.refresh(refresh);
+                storeTokens(r);
+                setUser(r.user);
+                setReady(true);
+                return;
+              } catch {
+                clearTokens();
+              }
+            } else {
+              clearTokens();
+            }
           }
         }
         if (s.auth_disabled) {
           const auto = await AuthApi.login("dev");
-          localStorage.setItem("scout_token", auto.token);
+          storeTokens(auto);
           setUser(auto.user);
         }
       } catch {
@@ -47,12 +72,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function login(username: string, password = "") {
     const res = await AuthApi.login(username, password);
-    localStorage.setItem("scout_token", res.token);
+    storeTokens(res);
     setUser(res.user);
   }
 
   function logout() {
-    localStorage.removeItem("scout_token");
+    clearTokens();
     setUser(null);
   }
 
