@@ -50,16 +50,18 @@ function FlintCardInner({ rec }: { rec: FlintResult }) {
           <div className="mb-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em] text-faint">
             Tools in play
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-col gap-1.5">
             {tools.map((t, i) => (
-              <span
+              <div
                 key={i}
-                className="inline-flex items-center rounded-full border border-hairstrong bg-surface2 px-2.5 py-1 text-[12px] text-muted"
-                title={t.from_resume || t.role_in_this_bid}
+                className="flex flex-wrap items-baseline gap-x-2 text-[13px] leading-relaxed"
+                title={t.from_resume || undefined}
               >
-                <span className="font-medium text-ink">{asText(t.tool)}</span>
-                {t.role_in_this_bid ? <span className="text-faint">&nbsp;→ {asText(t.role_in_this_bid)}</span> : null}
-              </span>
+                <span className="font-semibold" style={{ color: GOLD }}>
+                  {asText(t.tool)}
+                </span>
+                {t.role_in_this_bid && <span className="text-muted">{asText(t.role_in_this_bid)}</span>}
+              </div>
             ))}
           </div>
         </div>
@@ -69,9 +71,11 @@ function FlintCardInner({ rec }: { rec: FlintResult }) {
         <div key={i} className="rounded-xl border border-hair bg-surface2/60 p-3">
           <div className="flex items-start justify-between gap-3">
             <strong className="text-[14px] text-ink">{asText(s.title) || `Spark ${i + 1}`}</strong>
-            <span className="shrink-0 text-[11px] text-faint">
-              orig {s.originality ?? "—"} · feas {s.feasibility ?? "—"}
-            </span>
+            {(s.originality != null || s.feasibility != null) && (
+              <span className="shrink-0 text-[11px] text-faint">
+                orig {s.originality ?? "—"} · feas {s.feasibility ?? "—"}
+              </span>
+            )}
           </div>
           {s.hook && <p className="my-1.5 text-[13px] leading-relaxed text-muted">{asText(s.hook)}</p>}
           {asList(s.how).length > 0 && (

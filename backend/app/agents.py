@@ -118,12 +118,16 @@ AGENTS: dict[str, dict[str, str]] = {
             "Rules:\n"
             "- Name specific tools from the resume (software, hardware, frameworks, radios, GCS, TAK, "
             "PX4, Ollama, Docker, languages, etc.).\n"
-            "- Each spark must say WHICH of their tools is used and HOW it maps to the topic.\n"
-            "- Prefer surprising but defensible pairings (e.g. TAK + ULog health as a COP overlay; "
-            "Ollama-on-Jetson as the disconnected inference node; VEIN C2 leases as the safety gate "
-            "for an autonomy topic).\n"
-            "- Offer 3-5 sparks ranked by originality. Include one left-field spark that is still "
-            "deliverable with their tools.\n"
+            "- List each tool ONCE in tools_in_play. Never repeat a tool (watch spelling: 'Ollama' not "
+            "'OLlama'). from_resume = the short literal resume phrase that proves they use it. "
+            "role_in_this_bid = ONE short, topic-specific phrase (max 12 words) for what it does in "
+            "THIS bid. NEVER reuse the same role sentence for two different tools, and never invent "
+            "nonsense (e.g. do not claim USB-C solves swarming).\n"
+            "- Offer 3-5 sparks ranked by originality. For EACH spark: 'how' is 2-4 concrete STEPS "
+            "(start with a verb — Instrument, Deploy, Fuse…), NOT tool names. 'tools' is just the "
+            "tool NAMES used (strings). 'originality' and 'feasibility' are REQUIRED integers 0-10. "
+            "Include one left-field spark that is still deliverable with their tools.\n"
+            "- Keep every field distinct — no copy-paste between sparks or tools.\n"
             "- Call out tools they have that an obvious competitor would not think to use.\n"
             "- do_not_fake: topic needs they should NOT pretend to have.\n"
             "If there is no ME resume, say so in persona_read and give weaker, company-only sparks.\n"
@@ -286,6 +290,82 @@ def _normalize_brief(brief: dict[str, Any], products: dict[str, Any]) -> dict[st
     return brief
 
 
+def _flint_score(v: Any) -> Optional[int]:
+    try:
+        return max(0, min(10, int(round(float(v)))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _str_list(v: Any) -> list[str]:
+    """Flatten a messy value into clean strings (small models often put tool
+    objects where a list of strings belongs)."""
+    out: list[str] = []
+    for x in v if isinstance(v, list) else ([v] if v else []):
+        if isinstance(x, dict):
+            s = x.get("tool") or x.get("name") or x.get("text") or x.get("step") or ""
+        else:
+            s = x
+        s = str(s or "").strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _dedup_ci(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in items:
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def _normalize_flint(result: dict[str, Any]) -> dict[str, Any]:
+    """Clean Flint's output so a weak local model can't produce a wall of
+    duplicated, misfiled text: dedupe tools, coerce misplaced objects, and
+    normalize scores to ints or None."""
+    if not isinstance(result, dict) or result.get("raw"):
+        return result
+
+    # tools_in_play: dedupe by tool name (case-insensitive), trim fields.
+    tools: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for it in result.get("tools_in_play") or []:
+        if isinstance(it, dict):
+            tool = str(it.get("tool") or it.get("name") or "").strip()
+            frm = str(it.get("from_resume") or "").strip()
+            role = str(it.get("role_in_this_bid") or "").strip()
+        else:
+            tool, frm, role = str(it or "").strip(), "", ""
+        if not tool or tool.lower() in seen:
+            continue
+        seen.add(tool.lower())
+        tools.append({"tool": tool, "from_resume": frm, "role_in_this_bid": role})
+    result["tools_in_play"] = tools
+
+    # sparks: how = concrete steps (strings), tools = deduped names, int scores.
+    sparks: list[dict[str, Any]] = []
+    for s in result.get("sparks") or []:
+        if not isinstance(s, dict):
+            continue
+        sparks.append(
+            {
+                **s,
+                "how": _str_list(s.get("how")),
+                "tools": _dedup_ci(_str_list(s.get("tools"))),
+                "originality": _flint_score(s.get("originality")),
+                "feasibility": _flint_score(s.get("feasibility")),
+            }
+        )
+    result["sparks"] = sparks
+    result["do_not_fake"] = _str_list(result.get("do_not_fake"))
+    return result
+
+
 # ---- Helpers -------------------------------------------------------------
 
 def _safe_json(text: str) -> dict[str, Any]:
@@ -381,6 +461,8 @@ async def run_single_agent(
         model=model,
     )
     result = _safe_json(out)
+    if name == "Flint":
+        result = _normalize_flint(result)
     result["_role"] = spec["role"]
     return result
 
