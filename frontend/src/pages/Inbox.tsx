@@ -53,6 +53,8 @@ export default function Inbox() {
     enrich_running?: boolean;
   } | null>(null);
   const [rerankOpen, setRerankOpen] = useState(false);
+  // Topics you've already scored a personal fit on (gold ring on the map).
+  const [scoredIds, setScoredIds] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
   const meFileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -92,6 +94,37 @@ export default function Inbox() {
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Which plotted topics already have a personal fit (gold ring on the map).
+  // Pure vault read — no model calls. Derives the ids from the same inputs as
+  // the scatter so it stays in sync, and runs on every render (hook-safe).
+  useEffect(() => {
+    const latest = new Map<string, AnalysisRun>();
+    for (const h of history) if (!latest.has(h.topic_id)) latest.set(h.topic_id, h);
+    const pts = buildTopicPoints(
+      inbox?.matches || [],
+      new Map(
+        Array.from(latest, ([k, v]) => [
+          k,
+          { fit_score: v.fit_score, recommendation: v.recommendation },
+        ])
+      )
+    );
+    const ids = pts.map((p) => p.topicId);
+    if (!ids.length) {
+      setScoredIds(new Set());
+      return;
+    }
+    let alive = true;
+    TopicIntelApi.fitStatus(ids)
+      .then((scored) => {
+        if (alive) setScoredIds(new Set(scored));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [inbox, history]);
 
   async function scan(forceExtract: boolean, warn = true) {
     // First-run auto-scan (warn=false) skips the dialog. All other rerank
@@ -257,27 +290,6 @@ export default function Inbox() {
       ])
     )
   );
-
-  // Mark topics you've already scored a personal fit on (gold ring on the map).
-  // Pure read of the vault — no model calls.
-  const [scoredIds, setScoredIds] = useState<Set<string>>(new Set());
-  const scatterIdsKey = scatterPoints.map((p) => p.topicId).join(",");
-  useEffect(() => {
-    const ids = scatterIdsKey ? scatterIdsKey.split(",") : [];
-    if (!ids.length) {
-      setScoredIds(new Set());
-      return;
-    }
-    let alive = true;
-    TopicIntelApi.fitStatus(ids)
-      .then((scored) => {
-        if (alive) setScoredIds(new Set(scored));
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [scatterIdsKey]);
 
   if (!hasResume) {
     return (
