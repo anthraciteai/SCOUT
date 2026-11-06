@@ -29,44 +29,20 @@ from ..vault import get_vault
 router = APIRouter(prefix="/api/topics", tags=["topic-intel"])
 
 
-# ---- cache -------------------------------------------------------------
-
-def _cache_dir(topic_id: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", topic_id)[:120]
-    path = os.path.join(settings.data_dir, "topic_intel", safe)
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _read_json(topic_id: str, name: str) -> Optional[dict[str, Any]]:
-    path = os.path.join(_cache_dir(topic_id), name)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _write_json(topic_id: str, name: str, payload: dict[str, Any]) -> None:
-    path = os.path.join(_cache_dir(topic_id), name)
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-    except OSError:
-        pass
-
-
-# ---- identity scoping -------------------------------------------------
+# ---- storage -----------------------------------------------------------
 #
-# text.json + summary.json are topic-intrinsic: identical for everyone, so we
-# cache them once per topic and share them across all orgs (big token savings).
-# A fit, by contrast, is scored against the *caller's* resume/products, so it
-# is cached per (company_id, user_id) and only ever read back for that same
-# identity — which in production is the subject of the validated JWT.
+# Everything lives in the org vault (disk today, S3/SeaweedFS in prod):
+#
+#   sbirs/{id}/intel/text.json        SHARED  — OCR, identical for everyone
+#   sbirs/{id}/intel/summary.json     SHARED  — LLM summary, computed once
+#   sbir/{id}/{company}/users/{uid}/fit.json  PER-USER — scored vs your resume
+#
+# text/summary are topic-intrinsic, so a single compute is reused across every
+# group and org (big token savings). A fit is private: it is keyed by the
+# caller's verified identity and read back only for that same person.
 
 def _safe_ident(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", value or "")[:80] or "shared"
+    return re.sub(r"[^A-Za-z0-9_.:-]", "_", value or "")[:80] or "shared"
 
 
 def _ident_key() -> tuple[str, str]:
@@ -77,8 +53,64 @@ def _ident_key() -> tuple[str, str]:
     return _safe_ident(cid), _safe_ident(uid)
 
 
-def _fit_name(company_id: str, user_id: str) -> str:
-    return f"fit__{company_id}__{user_id}.json"
+def _legacy_dir(topic_id: str) -> str:
+    """Old flat disk cache: {data_dir}/topic_intel/{id}/. Read-only now; used
+    to migrate text/summary into the vault without re-OCR / re-summarize."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", topic_id)[:120]
+    return os.path.join(settings.data_dir, "topic_intel", safe)
+
+
+def _legacy_read(topic_id: str, name: str) -> Optional[dict[str, Any]]:
+    try:
+        with open(os.path.join(_legacy_dir(topic_id), name), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_shared(topic_id: str, kind: str) -> Optional[dict[str, Any]]:
+    """Read a SHARED topic artifact (kind = 'text'|'summary') from the vault,
+    promoting any legacy disk copy on first miss."""
+    vault = get_vault()
+    key = vault.intel_text_key(topic_id) if kind == "text" else vault.intel_summary_key(topic_id)
+    obj = vault.read_json(key)
+    if obj is None:
+        legacy = _legacy_read(topic_id, f"{kind}.json")
+        if legacy is not None:
+            vault.write_json(key, legacy, compact=True)
+            obj = legacy
+    return obj if isinstance(obj, dict) else None
+
+
+def _write_shared(topic_id: str, kind: str, payload: dict[str, Any]) -> None:
+    vault = get_vault()
+    key = vault.intel_text_key(topic_id) if kind == "text" else vault.intel_summary_key(topic_id)
+    vault.write_json(key, payload, compact=True)
+
+
+def _read_fit(topic_id: str, company_id: str, user_id: str) -> Optional[dict[str, Any]]:
+    obj = get_vault().read_json(get_vault().intel_fit_key(topic_id, company_id, user_id))
+    return obj if isinstance(obj, dict) else None
+
+
+def _write_fit(topic_id: str, company_id: str, user_id: str, payload: dict[str, Any]) -> None:
+    get_vault().write_json(
+        get_vault().intel_fit_key(topic_id, company_id, user_id), payload, compact=True
+    )
+
+
+def _require_fit_access(topic_id: str) -> tuple[str, str]:
+    """Return (company_id, user_id) for the caller, enforcing company
+    membership in production. Returns the key used to scope the fit."""
+    cid, uid = _ident_key()
+    ident = current_identity()
+    if settings.auth_disabled:
+        return cid, uid
+    if ident is None:
+        raise HTTPException(status_code=401, detail="Sign in")
+    if not get_vault().can_read_sbir(ident, topic_id):
+        raise HTTPException(status_code=403, detail="Not a member of this company")
+    return cid, uid
 
 
 # ---- raw text ----------------------------------------------------------
@@ -124,7 +156,7 @@ async def _details_text(topic_id: str) -> str:
 
 async def _ensure_text(topic_id: str, force: bool = False) -> dict[str, Any]:
     if not force:
-        cached = _read_json(topic_id, "text.json")
+        cached = _read_shared(topic_id, "text")
         if cached and (cached.get("text") or "").strip():
             return cached
 
@@ -157,7 +189,7 @@ async def _ensure_text(topic_id: str, force: bool = False) -> dict[str, Any]:
         "cached_at": time.time(),
         "text": text,
     }
-    _write_json(topic_id, "text.json", out)
+    _write_shared(topic_id, "text", out)
     return out
 
 
@@ -198,7 +230,7 @@ _SUMMARY_SYSTEM = (
 
 async def _ensure_summary(topic_id: str, force: bool = False) -> dict[str, Any]:
     if not force:
-        cached = _read_json(topic_id, "summary.json")
+        cached = _read_shared(topic_id, "summary")
         if cached:
             return cached
     text_blob = await _ensure_text(topic_id, force=force)
@@ -240,7 +272,7 @@ async def _ensure_summary(topic_id: str, force: bool = False) -> dict[str, Any]:
         ][:10],
         "keywords": [str(k) for k in (data.get("keywords") or [])][:20],
     }
-    _write_json(topic_id, "summary.json", payload)
+    _write_shared(topic_id, "summary", payload)
     return payload
 
 
@@ -264,10 +296,9 @@ _FIT_SYSTEM = (
 
 
 async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
-    company_id, user_id = _ident_key()
-    name = _fit_name(company_id, user_id)
+    company_id, user_id = _require_fit_access(topic_id)
     if not force:
-        cached = _read_json(topic_id, name)
+        cached = _read_fit(topic_id, company_id, user_id)
         if cached:
             return cached
     # The shared summary is reused as-is; forcing a re-score must NOT re-OCR or
@@ -312,9 +343,14 @@ async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
         overall = max(0, min(100, int(round(float(data.get("overall_fit") or 0)))))
     except (TypeError, ValueError):
         overall = 0
+    ident = current_identity()
     payload = {
         "topic_id": topic_id,
-        "scope": {"company_id": company_id, "user_id": user_id},
+        "scope": {
+            "company_id": company_id,
+            "user_id": user_id,
+            "display_name": (ident.display_name if ident else user_id),
+        },
         "cap_source": cap_source,
         "model": model,
         "cached_at": time.time(),
@@ -334,7 +370,7 @@ async def _fit(topic_id: str, force: bool = False) -> dict[str, Any]:
         "strengths": [str(s) for s in (data.get("strengths") or [])][:8],
         "gaps": [str(g) for g in (data.get("gaps") or [])][:8],
     }
-    _write_json(topic_id, name, payload)
+    _write_fit(topic_id, company_id, user_id, payload)
     return payload
 
 
@@ -367,5 +403,25 @@ async def topic_fit_cached(topic_id: str):
     Identity comes from the validated JWT (dev falls back to the default
     company + a shared user), so a user only ever sees their own fit. Returns
     null when nothing has been scored yet for this identity."""
-    company_id, user_id = _ident_key()
-    return _read_json(topic_id, _fit_name(company_id, user_id))
+    company_id, user_id = _require_fit_access(topic_id)
+    return _read_fit(topic_id, company_id, user_id)
+
+
+@router.get("/mine/fits")
+async def fit_status(ids: str = Query("")):
+    """Which of the given topic ids already have a cached fit for the caller.
+
+    Lets the inbox mark topics you've already scored without any model calls.
+    Returns {"scored": [topic_id, ...]} scoped to the caller's identity.
+    (Two-segment path avoids colliding with GET /api/topics/{topic_id}.)"""
+    cid, uid = _ident_key()
+    ident = current_identity()
+    want = [t.strip() for t in ids.split(",") if t.strip()][:200]
+    vault = get_vault()
+    scored: list[str] = []
+    for tid in want:
+        if not settings.auth_disabled and ident is not None and not vault.can_read_sbir(ident, tid):
+            continue
+        if vault.exists(vault.intel_fit_key(tid, cid, uid)):
+            scored.append(tid)
+    return {"scored": scored}

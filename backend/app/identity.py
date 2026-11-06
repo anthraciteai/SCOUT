@@ -1,6 +1,15 @@
-"""Request-scoped identity. Stub HMAC tokens, optional Keycloak userinfo."""
+"""Request-scoped identity.
+
+Three token shapes are understood:
+  - ``scout.<body>.<sig>``  dev stub, HMAC-signed with ``auth_secret``.
+  - Keycloak access token    verified *locally* against the realm JWKS
+                             (RS256 signature + exp + issuer + audience). No
+                             per-request round-trip to Keycloak.
+  - none, when ``auth_disabled`` is set (dev) -> a fixed ``dev`` identity.
+"""
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -8,9 +17,8 @@ import json
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
-import httpx
 from fastapi import Header, HTTPException, Request
 
 from .config import settings
@@ -83,33 +91,111 @@ def parse_stub_token(token: str) -> Identity:
     )
 
 
-async def parse_keycloak_token(token: str) -> Identity:
-    url = (
-        f"{settings.keycloak_url.rstrip('/')}/realms/{settings.keycloak_realm}"
-        "/protocol/openid-connect/userinfo"
-    )
-    async with httpx.AsyncClient(timeout=10.0) as c:
-        r = await c.get(url, headers={"Authorization": f"Bearer {token}"})
-    if r.status_code != 200:
-        raise HTTPException(status_code=401, detail="Keycloak rejected token")
-    info = r.json()
-    uid = info.get("preferred_username") or info.get("sub")
-    if not uid:
-        raise HTTPException(status_code=401, detail="Keycloak token has no username")
-    groups = info.get("groups") or []
-    groups = [str(g).lstrip("/") for g in groups]
-    company = settings.default_company
+# ---- Keycloak: local JWK/JWT validation --------------------------------
+#
+# We verify the access token's RS256 signature against the realm JWKS, plus
+# exp / issuer / audience, entirely in-process. PyJWKClient fetches the JWKS
+# once and caches the keys (keyed by ``kid``), so steady state is zero network.
+
+_jwk_client: Any = None
+_jwk_url: str = ""
+
+
+def _jwks_url() -> str:
+    base = settings.keycloak_url.rstrip("/")
+    return f"{base}/realms/{settings.keycloak_realm}/protocol/openid-connect/certs"
+
+
+def _get_jwk_client():
+    """Process-wide PyJWKClient, rebuilt only if the JWKS URL changes."""
+    global _jwk_client, _jwk_url
+    from jwt import PyJWKClient  # local import: optional dep
+
+    url = _jwks_url()
+    if _jwk_client is None or _jwk_url != url:
+        _jwk_client = PyJWKClient(url, cache_keys=True, lifespan=3600)
+        _jwk_url = url
+    return _jwk_client
+
+
+def _expected_issuers() -> list[str]:
+    out: list[str] = []
+    for base in (settings.keycloak_url, settings.keycloak_public_url):
+        b = (base or "").rstrip("/")
+        if b:
+            out.append(f"{b}/realms/{settings.keycloak_realm}")
+    return out
+
+
+def _check_issuer(claims: dict[str, Any]) -> None:
+    expected = _expected_issuers()
+    if expected and claims.get("iss") not in expected:
+        raise HTTPException(status_code=401, detail="Token issuer mismatch")
+
+
+def _check_audience(claims: dict[str, Any]) -> None:
+    # Keycloak puts the client id in ``azp`` and often ``account`` in ``aud``,
+    # so accept the configured audience in either slot.
+    want = (settings.keycloak_audience or "").strip()
+    if not want:
+        return
+    aud = claims.get("aud")
+    auds = aud if isinstance(aud, list) else [aud] if aud else []
+    if want in auds or claims.get("azp") == want:
+        return
+    raise HTTPException(status_code=401, detail="Token audience mismatch")
+
+
+def _company_from_groups(groups: list[str]) -> str:
     for g in groups:
         if g and g != "capture":
-            company = g
-            break
+            return g
+    return settings.default_company
+
+
+def _identity_from_claims(claims: dict[str, Any], auth: str) -> Identity:
+    uid = claims.get("preferred_username") or claims.get("sub")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Token has no username")
+    groups = [str(g).lstrip("/") for g in (claims.get("groups") or [])]
     return Identity(
         user_id=str(uid),
-        company_id=company,
-        display_name=str(info.get("name") or uid),
+        company_id=_company_from_groups(groups),
+        display_name=str(claims.get("name") or uid),
         groups=groups or ["capture"],
-        auth="keycloak",
+        auth=auth,
     )
+
+
+async def parse_keycloak_jwt(token: str) -> Identity:
+    import jwt  # local import: optional dep
+
+    try:
+        signing_key = await asyncio.to_thread(
+            _get_jwk_client().get_signing_key_from_jwt, token
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — JWKS fetch / kid lookup failures
+        raise HTTPException(status_code=401, detail=f"Signing key lookup failed: {e}") from e
+
+    try:
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            # We enforce aud/iss ourselves (Keycloak's aud is quirky).
+            options={"require": ["exp"], "verify_aud": False},
+            leeway=30,
+        )
+    except jwt.ExpiredSignatureError as e:
+        raise HTTPException(status_code=401, detail="Token expired") from e
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}") from e
+
+    _check_issuer(claims)
+    _check_audience(claims)
+    return _identity_from_claims(claims, auth="keycloak")
 
 
 async def identity_from_bearer(authorization: Optional[str]) -> Optional[Identity]:
@@ -121,7 +207,7 @@ async def identity_from_bearer(authorization: Optional[str]) -> Optional[Identit
     if raw.startswith("scout."):
         return parse_stub_token(raw)
     if settings.keycloak_url:
-        return await parse_keycloak_token(raw)
+        return await parse_keycloak_jwt(raw)
     raise HTTPException(status_code=401, detail="Unknown token")
 
 

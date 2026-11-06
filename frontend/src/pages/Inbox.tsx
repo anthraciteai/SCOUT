@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AnalysisApi, CatalogApi, MatchesApi, OrgApi, ResumeApi, TrackerApi } from "../api";
+import { AnalysisApi, CatalogApi, MatchesApi, OrgApi, ResumeApi, TopicIntelApi, TrackerApi } from "../api";
 import type { AnalysisRun, MatchInbox, MatchItem, ResumeInfo, SbirWorkspace } from "../types";
 import { useToast } from "../toast";
 import { topicMeta, statusClass, TopicDates } from "./Browse";
@@ -258,6 +258,27 @@ export default function Inbox() {
     )
   );
 
+  // Mark topics you've already scored a personal fit on (gold ring on the map).
+  // Pure read of the vault — no model calls.
+  const [scoredIds, setScoredIds] = useState<Set<string>>(new Set());
+  const scatterIdsKey = scatterPoints.map((p) => p.topicId).join(",");
+  useEffect(() => {
+    const ids = scatterIdsKey ? scatterIdsKey.split(",") : [];
+    if (!ids.length) {
+      setScoredIds(new Set());
+      return;
+    }
+    let alive = true;
+    TopicIntelApi.fitStatus(ids)
+      .then((scored) => {
+        if (alive) setScoredIds(new Set(scored));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [scatterIdsKey]);
+
   if (!hasResume) {
     return (
       <div>
@@ -318,9 +339,9 @@ export default function Inbox() {
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Opportunity map</h3>
           <p className="meta" style={{ marginTop: 0 }}>
-            Inbox match (x) vs Council fit (y). Bigger dot = more matched signals; color = component.
+            Inbox match (x) vs Council fit (y). Bigger dot = more matched signals; color = component; gold ring = you've scored fit.
           </p>
-          <TopicScatter points={scatterPoints} />
+          <TopicScatter points={scatterPoints} scoredIds={scoredIds} />
         </div>
       )}
 

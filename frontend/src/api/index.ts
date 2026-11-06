@@ -84,7 +84,7 @@ export interface FitRequirement {
 
 export interface TopicFit {
   topic_id: string;
-  scope?: { company_id: string; user_id: string };
+  scope?: { company_id: string; user_id: string; display_name?: string };
   cap_source?: string;
   model?: string;
   overall_fit: number;
@@ -105,6 +105,11 @@ export const TopicIntelApi = {
   // Cheap read of the caller's cached fit (no model call); null if not scored yet.
   fitCached: (id: string) =>
     api.get<TopicFit | null>(`/topics/${id}/fit`).then((r) => r.data),
+  // Which of these topics the caller has already scored a fit on (no model call).
+  fitStatus: (ids: string[]) =>
+    api
+      .get<{ scored: string[] }>(`/topics/mine/fits`, { params: { ids: ids.join(",") } })
+      .then((r) => r.data.scored),
 };
 
 // ---- Analysis ----

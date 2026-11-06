@@ -4,10 +4,10 @@ import { MemoryRouter } from "react-router-dom";
 import TopicScatter from "./TopicScatter";
 import type { TopicPoint } from "../lib/opportunity";
 
-function renderScatter(points: TopicPoint[]) {
+function renderScatter(points: TopicPoint[], scoredIds?: Set<string>) {
   return render(
     <MemoryRouter>
-      <TopicScatter points={points} />
+      <TopicScatter points={points} scoredIds={scoredIds} />
     </MemoryRouter>
   );
 }
@@ -47,5 +47,13 @@ describe("TopicScatter", () => {
       screen.getByLabelText(/plotted by inbox match score .* versus Council fit score/i)
     ).toBeInTheDocument();
     expect(screen.getByText(/x=match, y=fit, size=scope, color=component/i)).toBeInTheDocument();
+  });
+
+  it("notes the gold ring for scored topics in the legend", () => {
+    renderScatter(sample, new Set(["t1"]));
+    expect(
+      screen.getByLabelText(/plotted by inbox match score .* versus Council fit score/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/gold ring = you've scored fit/i)).toBeInTheDocument();
   });
 });

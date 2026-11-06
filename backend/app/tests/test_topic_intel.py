@@ -4,6 +4,8 @@ Covers the pure text handling and the on-disk cache. The async routes
 themselves call Docling / Ollama / DSIP and are exercised manually; here we
 lock down the deterministic pieces they rely on.
 """
+import pytest
+
 from app.routers import topic_intel
 
 
@@ -40,22 +42,45 @@ def test_harvest_strings_respects_budget():
     assert sum(len(x) for x in out) <= 5000 + 6000
 
 
-def test_cache_roundtrip(tmp_path, monkeypatch):
+@pytest.fixture
+def fresh_vault(tmp_path, monkeypatch):
+    """Point the vault at a throwaway dir and reset the process-wide singleton."""
+    import app.vault as vault_mod
+
+    monkeypatch.setattr(vault_mod.settings, "vault_dir", str(tmp_path / "vault"))
     monkeypatch.setattr(topic_intel.settings, "data_dir", str(tmp_path))
+    vault_mod._vault = None
+    yield vault_mod.get_vault()
+    vault_mod._vault = None
+
+
+# ---- storage: shared topic artifacts live globally -------------------
+
+def test_shared_cache_roundtrip(fresh_vault):
     payload = {"topic_id": "abc_123", "chars": 10, "text": "hello"}
-    topic_intel._write_json("abc_123", "text.json", payload)
-    got = topic_intel._read_json("abc_123", "text.json")
-    assert got == payload
-    # missing file -> None
-    assert topic_intel._read_json("abc_123", "nope.json") is None
+    topic_intel._write_shared("abc_123", "text", payload)
+    assert topic_intel._read_shared("abc_123", "text") == payload
+    # distinct kinds do not collide
+    assert topic_intel._read_shared("abc_123", "summary") is None
 
 
-def test_cache_dir_sanitizes_topic_id(tmp_path, monkeypatch):
-    monkeypatch.setattr(topic_intel.settings, "data_dir", str(tmp_path))
-    # path separators / odd chars must not escape the cache root
-    d = topic_intel._cache_dir("../../etc/passwd")
-    assert str(tmp_path) in d
-    assert "/etc/passwd" not in d
+def test_shared_cache_is_global_not_company_scoped(fresh_vault):
+    # text/summary are keyed only by topic id (sbirs/{id}/intel/...), so the
+    # same cached copy is reused regardless of who asks -> one compute, org-wide.
+    key = fresh_vault.intel_text_key("t9")
+    assert key == "sbirs/t9/intel/text.json"
+    assert "companies/" not in key and "/users/" not in key
+
+
+def test_legacy_disk_cache_is_migrated_on_read(fresh_vault, tmp_path):
+    # Simulate a pre-vault disk cache; _read_shared should promote it.
+    legacy_dir = tmp_path / "topic_intel" / "t5"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "summary.json").write_text('{"tldr": "old"}')
+    got = topic_intel._read_shared("t5", "summary")
+    assert got == {"tldr": "old"}
+    # and it is now in the vault (no second disk read needed)
+    assert fresh_vault.read_json(fresh_vault.intel_summary_key("t5")) == {"tldr": "old"}
 
 
 # ---- identity scoping (shared summary vs per-user fit) ----------------
@@ -75,20 +100,18 @@ def test_ident_key_uses_and_sanitizes_identity(monkeypatch):
     assert topic_intel._ident_key() == ("acme_corp", "user_42")
 
 
-def test_fit_name_is_scoped_per_identity():
-    assert (
-        topic_intel._fit_name("acme", "alice")
-        != topic_intel._fit_name("acme", "bob")
-    )
-    assert topic_intel._fit_name("acme", "alice") == "fit__acme__alice.json"
+def test_fit_key_is_scoped_per_user(fresh_vault):
+    a = fresh_vault.intel_fit_key("t1", "acme", "alice")
+    b = fresh_vault.intel_fit_key("t1", "acme", "bob")
+    assert a != b
+    assert a == "sbir/t1/acme/users/alice/fit.json"
 
 
-def test_fit_cache_is_isolated_between_users(tmp_path, monkeypatch):
-    monkeypatch.setattr(topic_intel.settings, "data_dir", str(tmp_path))
-    # Two users score the same topic; each must read back only their own fit.
-    topic_intel._write_json("t1", topic_intel._fit_name("acme", "alice"), {"overall_fit": 90})
-    topic_intel._write_json("t1", topic_intel._fit_name("acme", "bob"), {"overall_fit": 10})
-    assert topic_intel._read_json("t1", topic_intel._fit_name("acme", "alice")) == {"overall_fit": 90}
-    assert topic_intel._read_json("t1", topic_intel._fit_name("acme", "bob")) == {"overall_fit": 10}
+def test_fit_cache_is_isolated_between_users(fresh_vault):
+    # Two users score the same topic; each reads back only their own fit.
+    topic_intel._write_fit("t1", "acme", "alice", {"overall_fit": 90})
+    topic_intel._write_fit("t1", "acme", "bob", {"overall_fit": 10})
+    assert topic_intel._read_fit("t1", "acme", "alice") == {"overall_fit": 90}
+    assert topic_intel._read_fit("t1", "acme", "bob") == {"overall_fit": 10}
     # A brand-new user has no cached fit yet.
-    assert topic_intel._read_json("t1", topic_intel._fit_name("acme", "carol")) is None
+    assert topic_intel._read_fit("t1", "acme", "carol") is None

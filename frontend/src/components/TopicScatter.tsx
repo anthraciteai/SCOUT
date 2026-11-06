@@ -12,13 +12,25 @@ import { sqrtRadiusScale, type TopicPoint } from "../lib/opportunity";
  * colored by DoD component. The original TopicPoint row rides along on every
  * dot so tooltip + focus/select callbacks are fully typed.
  */
-export default function TopicScatter({ points }: { points: TopicPoint[] }) {
+export default function TopicScatter({
+  points,
+  scoredIds,
+}: {
+  points: TopicPoint[];
+  scoredIds?: Set<string>;
+}) {
   const navigate = useNavigate();
   const [hovered, setHovered] = useState<TopicPoint | null>(null);
 
   const definition = useMemo(() => {
     // Explicit sqrt radius scale over the scope (matched-signal) counts.
     const rScale = sqrtRadiusScale(points.map((p) => p.scope));
+    // Topics you've already scored a personal fit on get a gold ring. The
+    // ring radius is the dot's scaled radius + a few px, applied directly
+    // (no rScale) so it hugs the underlying dot.
+    const scored = scoredIds
+      ? points.filter((p) => scoredIds.has(p.topicId))
+      : [];
     return defineChart({
       marks: [
         dot(points, {
@@ -32,6 +44,19 @@ export default function TopicScatter({ points }: { points: TopicPoint[] }) {
           stroke: "#0a0b0d",
           strokeWidth: 1,
         }),
+        ...(scored.length
+          ? [
+              dot(scored, {
+                x: "matchScore",
+                y: "fitScore",
+                r: (d) => rScale(d.scope) + 4,
+                key: "topicId",
+                fill: "none",
+                stroke: "#d9a521", // gold = "scored for you"
+                strokeWidth: 2,
+              }),
+            ]
+          : []),
       ],
       scales: {
         // Compact linear scales let TanStack Charts infer both domains.
@@ -50,7 +75,7 @@ export default function TopicScatter({ points }: { points: TopicPoint[] }) {
       },
       tooltip: tooltipExtension,
     });
-  }, [points]);
+  }, [points, scoredIds]);
 
   if (points.length === 0) {
     return (
@@ -80,9 +105,10 @@ export default function TopicScatter({ points }: { points: TopicPoint[] }) {
             {hovered.title} · match {hovered.matchScore} · fit {hovered.fitScore} ·{" "}
             {hovered.scope} signals · {hovered.component}
             {hovered.recommendation ? ` · ${hovered.recommendation}` : ""}
+            {scoredIds?.has(hovered.topicId) ? " · ✓ fit scored" : ""}
           </>
         ) : (
-          <>Hover a dot for details · click to open its workspace · x=match, y=fit, size=scope, color=component</>
+          <>Hover a dot for details · click to open its workspace · x=match, y=fit, size=scope, color=component · gold ring = you've scored fit</>
         )}
       </div>
     </div>

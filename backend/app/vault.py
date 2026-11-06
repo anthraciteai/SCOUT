@@ -352,6 +352,25 @@ class Vault:
         """sbirs/{sbir_id}/tags.json — one pack per solicitation id, not under a company bid."""
         return f"sbirs/{_ok(topic_id)}/tags.json"
 
+    # ---- topic intelligence (OCR + summary shared; fit per-user) ---------
+    #
+    # text + summary are intrinsic to the solicitation (identical for everyone)
+    # so they live under the GLOBAL sbirs/{id}/ prefix and are computed once.
+    # A fit is scored against one person's resume, so it lives under that
+    # user's per-bid desk and is gated by company membership like any other
+    # user artifact.
+
+    def intel_text_key(self, topic_id: str) -> str:
+        return f"sbirs/{_ok(topic_id)}/intel/text.json"
+
+    def intel_summary_key(self, topic_id: str) -> str:
+        return f"sbirs/{_ok(topic_id)}/intel/summary.json"
+
+    def intel_fit_key(self, topic_id: str, company_id: str, user_id: str) -> str:
+        return (
+            f"sbir/{_ok(topic_id)}/{_ok(company_id)}/users/{_ok(user_id)}/fit.json"
+        )
+
     def chat_path(self, topic_id: str, ident: Identity, agent: str) -> str:
         return (
             f"sbir/{_ok(topic_id)}/{_ok(ident.company_id)}/users/{_ok(ident.user_id)}"

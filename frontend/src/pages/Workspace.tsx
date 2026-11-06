@@ -397,7 +397,9 @@ export default function Workspace() {
                     )}
                   </div>
                   <div className="row">
-                    <span className="meta">profile: {fit.cap_source}</span>
+                    <span className="meta">
+                      Scored for {fit.scope?.display_name || "you"} · profile: {fit.cap_source}
+                    </span>
                     <button className="ghost small" onClick={() => doFit(true)} disabled={fitBusy}>
                       Re-score
                     </button>
