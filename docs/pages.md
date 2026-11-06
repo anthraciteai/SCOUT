@@ -77,8 +77,11 @@ into reusable lessons that later reviews can draw on.
 
 ### Company — `/org` · `pages/Org.tsx`
 The org pack: company **mission** and **products**. Shared by everyone in the company and used
-as capability context in fit/council. Also where you switch which seeded person you are.
-- Calls: `OrgApi` (company mission/products).
+as capability context in fit/council. Each product has a **build prompt** (what SBIR/STTR work
+fits it) plus keywords; Scout folds these into matching so it finds topics per product — this is
+how a new org tunes Scout to its own product lineup. Also where you manage people and switch
+which seeded person you are.
+- Calls: `OrgApi` (company mission; per-product build-prompts via `product-profiles`; roster).
 
 ### Profile — `/profile` · `pages/Profile.tsx`
 Upload your resume and mark it **ME** (the tools *you* personally have used). Kept separate from

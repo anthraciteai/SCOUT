@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { OrgApi } from "../api";
+import { OrgApi, type ProductProfile } from "../api";
 import type { OrgCompany, OrgEmployee, SbirWorkspace } from "../types";
 import { useAuth } from "../auth";
 import { useToast } from "../toast";
@@ -8,6 +8,25 @@ import { useToast } from "../toast";
 interface EmployeeDraft {
   display_name: string;
   skills: string; // comma-separated for the input
+}
+
+/** Editable form of a product; keywords are a comma string while typing. */
+interface ProductDraft {
+  id?: string;
+  name: string;
+  summary: string;
+  prompt: string;
+  keywords: string;
+}
+
+function toDraft(p: ProductProfile): ProductDraft {
+  return {
+    id: p.id,
+    name: p.name || "",
+    summary: p.summary || "",
+    prompt: p.prompt || "",
+    keywords: (p.keywords || []).join(", "),
+  };
 }
 
 interface ResumeMeta {
@@ -22,7 +41,8 @@ export default function Org() {
   const [co, setCo] = useState<OrgCompany | null>(null);
   const [sbirs, setSbirs] = useState<SbirWorkspace[]>([]);
   const [mission, setMission] = useState("");
-  const [products, setProducts] = useState("");
+  const [products, setProducts] = useState<ProductDraft[]>([]);
+  const [savingProducts, setSavingProducts] = useState(false);
   const [editing, setEditing] = useState<string | null>(null); // user_id being edited
   const [draft, setDraft] = useState<EmployeeDraft>({ display_name: "", skills: "" });
   const [busy, setBusy] = useState<string | null>(null);
@@ -38,12 +58,53 @@ export default function Org() {
   const toast = useToast();
 
   async function load() {
-    const [c, s] = await Promise.all([OrgApi.company(), OrgApi.sbirs()]);
+    const [c, s, profiles] = await Promise.all([
+      OrgApi.company(),
+      OrgApi.sbirs(),
+      OrgApi.productProfiles().catch(() => [] as ProductProfile[]),
+    ]);
     setCo(c);
     setMission(c.mission);
-    setProducts(c.products);
+    setProducts(profiles.map(toDraft));
     setSbirs(s);
     loadResumes(c.employees.map((e) => e.user_id));
+  }
+
+  function updateProduct(i: number, patch: Partial<ProductDraft>) {
+    setProducts((ps) => ps.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+  }
+
+  function addProduct() {
+    setProducts((ps) => [...ps, { name: "", summary: "", prompt: "", keywords: "" }]);
+  }
+
+  function removeProduct(i: number) {
+    setProducts((ps) => ps.filter((_, idx) => idx !== i));
+  }
+
+  async function saveProducts() {
+    setSavingProducts(true);
+    try {
+      const payload: ProductProfile[] = products
+        .filter((p) => p.name.trim())
+        .map((p) => ({
+          id: p.id,
+          name: p.name.trim(),
+          summary: p.summary.trim(),
+          prompt: p.prompt.trim(),
+          keywords: p.keywords
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean),
+        }));
+      const saved = await OrgApi.saveProductProfiles(payload);
+      setProducts(saved.map(toDraft));
+      toast("Products saved — re-tagging matching in the background.");
+    } catch (err: any) {
+      toast(err?.response?.data?.detail || err.message || "Save failed", "error");
+    } finally {
+      setSavingProducts(false);
+    }
   }
 
   async function loadResumes(uids: string[]) {
@@ -226,17 +287,82 @@ export default function Org() {
       </div>
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Products</h2>
-        <textarea rows={10} value={products} onChange={(e) => setProducts(e.target.value)} />
-        <div style={{ marginTop: 8 }}>
-          <button
-            className="ghost"
-            onClick={async () => {
-              await OrgApi.saveProducts(products);
-              toast("Products saved for the org");
-            }}
-          >
-            Save products
+        <div className="row spread" style={{ alignItems: "baseline" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Products</h2>
+            <p className="meta" style={{ marginTop: 4, maxWidth: 680 }}>
+              Give each product a <strong>build prompt</strong> — what kind of SBIR/STTR work fits
+              it and what to look for — plus keywords. Scout folds these into matching so it finds
+              topics that fit <em>each</em> product. This is how a new org tunes Scout to its own
+              lineup.
+            </p>
+          </div>
+          <button className="small" onClick={addProduct}>
+            + Add product
+          </button>
+        </div>
+
+        {products.length === 0 && (
+          <div className="empty" style={{ marginTop: 10 }}>
+            No products yet. Add one — e.g. name “VEIN”, a one-line summary, then a build prompt
+            like “Fits C2 / common-operating-picture / TAK-integration / fleet-telemetry topics.”
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3" style={{ marginTop: 10 }}>
+          {products.map((p, i) => (
+            <div
+              key={i}
+              className="rounded-xl p-3"
+              style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+            >
+              <div className="row spread" style={{ gap: 8 }}>
+                <input
+                  value={p.name}
+                  onChange={(e) => updateProduct(i, { name: e.target.value })}
+                  placeholder="Product name (e.g. VEIN)"
+                  style={{ fontWeight: 700, flex: 1 }}
+                />
+                <button
+                  className="ghost small danger"
+                  onClick={() => removeProduct(i)}
+                  title="Remove product"
+                >
+                  remove
+                </button>
+              </div>
+              <input
+                value={p.summary}
+                onChange={(e) => updateProduct(i, { summary: e.target.value })}
+                placeholder="One-line summary — what it is"
+                style={{ width: "100%", marginTop: 8 }}
+              />
+              <label className="kv" style={{ display: "block", marginTop: 10 }}>
+                Build prompt
+              </label>
+              <textarea
+                rows={3}
+                value={p.prompt}
+                onChange={(e) => updateProduct(i, { prompt: e.target.value })}
+                placeholder="What kind of topics fit this product, and how to judge fit. e.g. 'Fits fleet C2 / COP / TAK-plugin / signed-command / DDIL topics. Strong when the topic needs an operator-facing common operating picture.'"
+                style={{ width: "100%" }}
+              />
+              <label className="kv" style={{ display: "block", marginTop: 10 }}>
+                Keywords (comma separated — these directly steer matching)
+              </label>
+              <input
+                value={p.keywords}
+                onChange={(e) => updateProduct(i, { keywords: e.target.value })}
+                placeholder="TAK, ATAK, common operating picture, mission planning, signed commands"
+                style={{ width: "100%" }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <button onClick={saveProducts} disabled={savingProducts}>
+            {savingProducts ? "Saving…" : "Save products"}
           </button>
         </div>
       </div>

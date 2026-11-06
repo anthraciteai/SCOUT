@@ -1,4 +1,5 @@
 """Org desk + per-SBIR workspace. Cached council/Flint live in the vault."""
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -20,6 +21,21 @@ class SkillsBody(BaseModel):
     skills: list[str] = []
     me: Optional[str] = None
     display_name: Optional[str] = None
+
+
+class ProductProfile(BaseModel):
+    """One product an org sells, with a 'build prompt' that teaches Scout what
+    kind of SBIR/STTR work fits it. Multi-tenant: every company defines its own."""
+
+    id: str = ""
+    name: str = ""
+    summary: str = ""   # one-liner: what it is
+    prompt: str = ""    # the build prompt: what to look for / how to judge fit
+    keywords: list[str] = []  # explicit terms that should pull topics toward this product
+
+
+class ProductProfilesBody(BaseModel):
+    products: list[ProductProfile] = []
 
 
 class EmployeeEditBody(BaseModel):
@@ -80,6 +96,53 @@ def put_products(body: TextBody, ident: Identity = Depends(get_identity)):
     for uid in v.company_employees(cid):
         catalog.refresh_resume_tags_from_bundle(uid, cid)
     return {"ok": True}
+
+
+@router.get("/company/product-profiles")
+def get_product_profiles(ident: Identity = Depends(get_identity), company_id: Optional[str] = None):
+    """Structured per-product build-prompts. Migrates the legacy products.md on
+    first read so existing orgs get a starting list to enrich."""
+    cid = _assert_company(ident, company_id)
+    v = get_vault()
+    stored = v.read_json(f"companies/{cid}/products.json")
+    profiles = _coerce_profiles(stored)
+    if profiles is None:
+        profiles = _parse_products_md(v.read_text(f"companies/{cid}/products.md"))
+    return {"company_id": cid, "products": profiles}
+
+
+@router.put("/company/product-profiles")
+def put_product_profiles(body: ProductProfilesBody, ident: Identity = Depends(get_identity)):
+    """Save the structured products. Also regenerates products.md (so display +
+    tagging keep working) and re-tags the company/people so matching reflects the
+    new per-product build-prompts immediately."""
+    cid = _assert_company(ident)
+    v = get_vault()
+    profiles: list[dict] = []
+    seen: set[str] = set()
+    for p in body.products:
+        name = (p.name or "").strip()
+        if not name:
+            continue
+        pid = (p.id or "").strip() or _slug(name)
+        while pid in seen:
+            pid = f"{pid}-x"
+        seen.add(pid)
+        profiles.append(
+            {
+                "id": pid,
+                "name": name,
+                "summary": (p.summary or "").strip(),
+                "prompt": (p.prompt or "").strip(),
+                "keywords": _clean_keywords(p.keywords),
+            }
+        )
+    v.write_json(f"companies/{cid}/products.json", {"products": profiles})
+    v.write_text(f"companies/{cid}/products.md", _profiles_to_md(profiles))
+    catalog.refresh_company_tags_from_vault(cid)
+    for uid in v.company_employees(cid):
+        catalog.refresh_resume_tags_from_bundle(uid, cid)
+    return {"ok": True, "company_id": cid, "products": profiles}
 
 
 @router.put("/me")
@@ -356,6 +419,88 @@ def promote_collab(topic_id: str, body: PromoteBody, ident: Identity = Depends(g
             detail="Shared proposal changed under you. Reload and promote again.",
         )
     return result
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-") or "product"
+
+
+def _clean_keywords(raw) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for k in raw or []:
+        k = str(k).strip()
+        if k and k.lower() not in seen:
+            seen.add(k.lower())
+            out.append(k)
+    return out
+
+
+def _coerce_profiles(stored) -> Optional[list[dict]]:
+    """Normalize whatever is in products.json into a list, or None if absent."""
+    if isinstance(stored, dict):
+        stored = stored.get("products")
+    if not isinstance(stored, list):
+        return None
+    out: list[dict] = []
+    for p in stored:
+        if not isinstance(p, dict):
+            continue
+        name = str(p.get("name") or "").strip()
+        if not name:
+            continue
+        out.append(
+            {
+                "id": str(p.get("id") or "").strip() or _slug(name),
+                "name": name,
+                "summary": str(p.get("summary") or "").strip(),
+                "prompt": str(p.get("prompt") or "").strip(),
+                "keywords": _clean_keywords(p.get("keywords")),
+            }
+        )
+    return out
+
+
+def _parse_products_md(md: str) -> list[dict]:
+    """Best-effort migration of the legacy `**NAME** — summary` markdown into
+    structured profiles so an existing org isn't starting from scratch."""
+    out: list[dict] = []
+    for block in re.split(r"\n\s*\n", (md or "").strip()):
+        block = block.strip()
+        if not block or block.startswith("#"):
+            continue
+        m = re.match(r"\*\*(.+?)\*\*\s*[—\-:]*\s*(.*)", block, re.S)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        summary = " ".join(m.group(2).split())
+        out.append(
+            {
+                "id": _slug(name),
+                "name": name,
+                "summary": summary[:400],
+                "prompt": "",
+                "keywords": [],
+            }
+        )
+    return out
+
+
+def _profiles_to_md(profiles: list[dict]) -> str:
+    """Render structured products back to markdown so the existing tag pipeline
+    and other readers of products.md keep working."""
+    lines = ["# Products", ""]
+    for p in profiles:
+        summary = p.get("summary") or ""
+        lines.append(f"**{p['name']}**{(' — ' + summary) if summary else ''}")
+        if p.get("prompt"):
+            lines.append("")
+            lines.append(p["prompt"])
+        if p.get("keywords"):
+            lines.append("")
+            lines.append("Keywords: " + ", ".join(p["keywords"]))
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
 
 
 def _groups(v, cid: str) -> list[dict]:

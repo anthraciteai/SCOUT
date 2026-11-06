@@ -352,8 +352,28 @@ def refresh_company_tags_from_vault(company_id: str) -> None:
     products = v.read_text(f"companies/{company_id}/products.md")
     blob = f"{mission}\n{products}".strip()
     tags = fallback_phrases(_synth_topic(company_id, blob))
+    # Fold explicit per-product build-prompt keywords straight into the phrase
+    # pack so they ALWAYS count in matching (not left to LLM phrase extraction).
+    kw = _product_keywords(v, company_id)
+    if kw:
+        tags["phrases"] = list(dict.fromkeys([*(tags.get("phrases") or []), *kw]))
     write_company_tags(company_id, tags)
     _schedule_llm(_llm_company_tags(company_id, blob, mission, products))
+
+
+def _product_keywords(v, company_id: str) -> list[str]:
+    """Explicit keywords from the structured per-product profiles, if any."""
+    stored = v.read_json(f"companies/{company_id}/products.json")
+    products = stored.get("products") if isinstance(stored, dict) else stored
+    out: list[str] = []
+    for p in products or []:
+        if not isinstance(p, dict):
+            continue
+        for k in p.get("keywords") or []:
+            k = str(k).strip()
+            if k:
+                out.append(k)
+    return out
 
 
 def refresh_resume_tags_from_text(user_id: str, text: str, kind: str = "me") -> None:

@@ -12,7 +12,7 @@ All business routes are under `/api`. When `AUTH_DISABLED=false`, requests are B
 |--------|--------|--------------|
 | `system` | `/api/system` | Health + status (`auth_disabled`, model info). |
 | `auth` | `/api/auth` | `status`, `login`, `me`. Identity + stub/Keycloak tokens. |
-| `org` | `/api/org` | Company mission/products; per-bid SBIR workspace; shared `proposal.md`; group collab (overlap refresh/promote). |
+| `org` | `/api/org` | Company mission/products (incl. structured per-product build-prompts); per-bid SBIR workspace; shared `proposal.md`; group collab (overlap refresh/promote). |
 | `topics` | `/api/topics` | DSIP topics: `search`, `{id}` detail, `{id}/questions`, `{id}/download/{fmt}`, `{id}/reference/{name}`. |
 | `topic_intel` | `/api/topics` | OCR → summary → fit for one topic (see below). |
 | `matches` | `/api/matches` | Resume → DSIP ranking (the Inbox). Scan + inbox read. |
@@ -40,6 +40,20 @@ All business routes are under `/api`. When `AUTH_DISABLED=false`, requests are B
 
 Shared artifacts are computed once and reused across the whole org; fit is private per user.
 See [`topic-intelligence.md`](topic-intelligence.md).
+
+## Per-product build-prompts (`org.py`)
+
+Each company defines its own products with a **build prompt** (what SBIR work fits the product)
+plus explicit keywords, so Scout is multi-tenant — a new org tunes matching to its own lineup.
+
+| Method + path | Scope | Notes |
+|---------------|-------|-------|
+| `GET /api/org/company/product-profiles` | company | Structured products `[{id,name,summary,prompt,keywords[]}]`. Migrates legacy `products.md` on first read. |
+| `PUT /api/org/company/product-profiles` | company | Save products. Regenerates `products.md`, re-tags company + people so matching reflects the new prompts/keywords. |
+
+Stored at `companies/{id}/products.json`. The keywords are folded directly into the company tag
+pack (`catalog._product_keywords`), so they always count in ranking rather than relying on LLM
+phrase extraction.
 
 ## Auth
 

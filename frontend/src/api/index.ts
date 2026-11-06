@@ -659,10 +659,26 @@ export const AuthApi = {
   me: () => api.get<ScoutUser>("/auth/me").then((r) => r.data),
 };
 
+export interface ProductProfile {
+  id?: string;
+  name: string;
+  summary?: string;
+  prompt?: string;
+  keywords?: string[];
+}
+
 export const OrgApi = {
   company: () => api.get<OrgCompany>("/org/company").then((r) => r.data),
   saveMission: (text: string) => api.put("/org/company/mission", { text }).then((r) => r.data),
   saveProducts: (text: string) => api.put("/org/company/products", { text }).then((r) => r.data),
+  productProfiles: () =>
+    api
+      .get<{ company_id: string; products: ProductProfile[] }>("/org/company/product-profiles")
+      .then((r) => r.data.products),
+  saveProductProfiles: (products: ProductProfile[]) =>
+    api
+      .put<{ ok: boolean; products: ProductProfile[] }>("/org/company/product-profiles", { products })
+      .then((r) => r.data.products),
   saveMe: (body: { me?: string; skills?: string[]; display_name?: string }) =>
     api.put("/org/me", body).then((r) => r.data),
   hireEmployee: (
